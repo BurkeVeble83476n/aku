@@ -1,0 +1,29 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/aohoyd/aku/pkg/build.Version={{.Version}}
+      - -X github.com/aohoyd/aku/pkg/build.Commit={{.Commit}}
+      - -X github.com/aohoyd/aku/pkg/build.Date={{.Date}}
+
+archives:
+  - format: tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

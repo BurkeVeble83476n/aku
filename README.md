@@ -45,6 +45,10 @@ A terminal UI for managing Kubernetes clusters, built with [Bubble Tea](https://
 
 ## Installation
 
+### From GitHub releases
+
+Download a prebuilt binary from the [releases page](https://github.com/aohoyd/aku/releases).
+
 ### From source
 
 ```bash
@@ -56,7 +60,7 @@ go install github.com/aohoyd/aku@latest
 ```bash
 git clone https://github.com/aohoyd/aku.git
 cd aku
-go build -o aku .
+make build
 ```
 
 ## Usage
@@ -162,6 +166,8 @@ highlights:
 | `e` | Edit resource |
 | `Z` | Toggle zoom |
 | `Ctrl+r` | Reload all |
+| `/` | Search (regex) |
+| `\|` / `Ctrl+/` | Filter (regex) |
 
 ### Resource List
 
@@ -171,8 +177,6 @@ highlights:
 | `gg` / `G` | Top / bottom |
 | `Enter` | Drill down / open detail |
 | `Tab` / `Shift+Tab` | Next / prev split pane |
-| `/` | Search (regex) |
-| `Ctrl+/` | Filter (regex) |
 | `Space` | Toggle select |
 | `Ctrl+a` | Select all |
 | `Ctrl+d` | Delete selected |
