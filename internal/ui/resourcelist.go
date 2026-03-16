@@ -622,6 +622,7 @@ func (r *ResourceList) ApplySearch(pattern string, mode msgs.SearchMode) error {
 			r.table.SetCursor(indices[0])
 			r.searchState.CurrentIdx = 0
 			r.searchState.MatchCount = len(indices)
+			r.refreshSearchHighlights()
 		}
 	}
 	return nil
