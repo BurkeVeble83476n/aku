@@ -582,6 +582,18 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case command == "toggle-log-syntax":
+		if a.layout.IsLogMode() {
+			a.layout.LogView().ToggleSyntax()
+		}
+		return a, nil
+
+	case command == "log-insert-marker":
+		if a.layout.IsLogMode() {
+			a.layout.LogView().InsertMarker()
+		}
+		return a, nil
+
 	case command == "select-container":
 		if !a.layout.IsLogMode() {
 			return a, nil
@@ -886,6 +898,9 @@ func (a App) subscribeAndPopulate(split *ui.ResourceList, p plugin.ResourcePlugi
 }
 
 func (a App) reloadAll() (tea.Model, tea.Cmd) {
+	wasLogMode := a.layout.IsLogMode()
+	wasRightVisible := a.layout.RightPanelVisible()
+
 	// Tear down all informers and clear store cache
 	if a.store != nil {
 		a.store.UnsubscribeAll()
@@ -917,7 +932,16 @@ func (a App) reloadAll() (tea.Model, tea.Cmd) {
 		a.subscribeAndPopulate(split, split.Plugin(), split.EffectiveNamespace())
 	}
 
-	a = a.reloadDetailPanel()
+	// Restore detail panel state
+	if wasRightVisible && wasLogMode {
+		a.layout.SetLogMode(true)
+		if lv := a.layout.LogView(); lv != nil {
+			lv.ClearAndRestart()
+			lv.SetUnavailable(true)
+		}
+	} else {
+		a = a.reloadDetailPanel()
+	}
 
 	// Update status bar
 	a.statusBar.SetError("")

@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
@@ -12,6 +16,7 @@ import (
 	"github.com/aohoyd/aku/internal/msgs"
 	"github.com/aohoyd/aku/internal/theme"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/valyala/fastjson"
 )
 
 // compiledHighlight is a pre-compiled highlight rule ready for fast matching.
@@ -20,11 +25,261 @@ type compiledHighlight struct {
 	style lipgloss.Style
 }
 
+// Package-level compiled regexes for built-in log level highlighting.
+var (
+	builtinError = regexp.MustCompile(`(?i)\b(ERROR|ERR|FATAL)\b`)
+	builtinWarn  = regexp.MustCompile(`(?i)\b(WARN|WARNING)\b`)
+	builtinInfo  = regexp.MustCompile(`(?i)\bINFO\b`)
+	builtinDebug = regexp.MustCompile(`(?i)\b(DEBUG|DBG)\b`)
+	builtinTrace = regexp.MustCompile(`(?i)\bTRACE\b`)
+
+	// Timestamp regex with submatch groups: (date)(time)(timezone?)
+	builtinTimestamp = regexp.MustCompile(`(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]\d{2}:?\d{2})?`)
+
+	builtinIPv4 = regexp.MustCompile(`\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(:\d+)?\b`)
+)
+
+// Lipgloss styles for timestamp components (Kanagawa theme colors).
+var (
+	timestampDateStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFA066")) // SurimiOrange
+	timestampTimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#7E9CD8")) // CrystalBlue
+	timestampTZStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#727169")) // FujiGrey
+	builtinIPStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#7FB4CA")) // WaveBlue
+)
+
+// Lipgloss styles for JSON syntax coloring (Kanagawa theme colors).
+var (
+	jsonKeyStyle    = lipgloss.NewStyle().Foreground(theme.SyntaxKey)
+	jsonStringStyle = lipgloss.NewStyle().Foreground(theme.SyntaxString)
+	jsonNumberStyle = lipgloss.NewStyle().Foreground(theme.SyntaxNumber)
+	jsonBoolStyle   = lipgloss.NewStyle().Foreground(theme.SyntaxBool)
+	jsonNullStyle   = lipgloss.NewStyle().Foreground(theme.SyntaxNull)
+	jsonMarkerStyle = lipgloss.NewStyle().Foreground(theme.SyntaxMarker)
+)
+
+var fjParser fastjson.Parser
+
+// builtinLogLevels contains pre-compiled highlight rules for standard log levels
+// using Kanagawa theme colors.
+var builtinLogLevels = []compiledHighlight{
+	{re: builtinError, style: lipgloss.NewStyle().Foreground(theme.Error).Bold(true)},
+	{re: builtinWarn, style: lipgloss.NewStyle().Foreground(theme.Warning)},
+	{re: builtinInfo, style: lipgloss.NewStyle().Foreground(theme.SyntaxValue)},
+	{re: builtinDebug, style: lipgloss.NewStyle().Foreground(theme.StatusRunning)},
+	{re: builtinTrace, style: lipgloss.NewStyle().Foreground(theme.Muted).Faint(true)},
+}
+
+// jsonFragment records the byte offsets of a valid JSON fragment within a line.
+type jsonFragment struct {
+	start, end int // byte offsets in the line
+}
+
+// findJSONFragments scans a line for valid JSON objects ({...}) and arrays ([...]).
+// It tracks nesting depth and handles quoted strings (including escaped quotes).
+// Only candidates that pass fastjson.Validate are returned.
+func findJSONFragments(line string) []jsonFragment {
+	var fragments []jsonFragment
+	i := 0
+	for i < len(line) {
+		ch := line[i]
+		if ch != '{' && ch != '[' {
+			i++
+			continue
+		}
+		// Found a potential JSON start
+		open := ch
+		var close byte
+		if open == '{' {
+			close = '}'
+		} else {
+			close = ']'
+		}
+		depth := 1
+		j := i + 1
+		for j < len(line) && depth > 0 {
+			c := line[j]
+			if c == '"' {
+				// Skip quoted string
+				j++
+				for j < len(line) {
+					if line[j] == '\\' {
+						j += 2 // skip escaped character
+						continue
+					}
+					if line[j] == '"' {
+						j++
+						break
+					}
+					j++
+				}
+				continue
+			}
+			if c == open || (open == '{' && c == '[') || (open == '[' && c == '{') {
+				depth++
+			} else if c == close || (open == '{' && c == ']') || (open == '[' && c == '}') {
+				depth--
+			}
+			j++
+		}
+		if depth == 0 {
+			candidate := line[i:j]
+			if err := fastjson.Validate(candidate); err == nil {
+				fragments = append(fragments, jsonFragment{start: i, end: j})
+				i = j
+				continue
+			}
+		}
+		i++
+	}
+	return fragments
+}
+
+// colorizeJSON tokenizes a raw JSON string and returns it with ANSI color codes
+// and improved spacing (spaces after colons, commas, and inside braces).
+func colorizeJSON(raw string) string {
+	v, err := fjParser.Parse(raw)
+	if err != nil {
+		return raw
+	}
+
+	var sb strings.Builder
+	writeJSONValue(&sb, v)
+	return sb.String()
+}
+
+func writeJSONValue(sb *strings.Builder, v *fastjson.Value) {
+	switch v.Type() {
+	case fastjson.TypeObject:
+		sb.WriteString(jsonMarkerStyle.Render("{"))
+		sb.WriteString(" ")
+		obj, _ := v.Object()
+		i := 0
+		obj.Visit(func(key []byte, val *fastjson.Value) {
+			if i > 0 {
+				sb.WriteString(jsonMarkerStyle.Render(","))
+				sb.WriteString(" ")
+			}
+			sb.WriteString(jsonKeyStyle.Render(quoteString(string(key))))
+			sb.WriteString(jsonMarkerStyle.Render(":"))
+			sb.WriteString(" ")
+			writeJSONValue(sb, val)
+			i++
+		})
+		sb.WriteString(" ")
+		sb.WriteString(jsonMarkerStyle.Render("}"))
+
+	case fastjson.TypeArray:
+		sb.WriteString(jsonMarkerStyle.Render("["))
+		arr, _ := v.Array()
+		for i, elem := range arr {
+			if i > 0 {
+				sb.WriteString(jsonMarkerStyle.Render(","))
+				sb.WriteString(" ")
+			}
+			writeJSONValue(sb, elem)
+		}
+		sb.WriteString(jsonMarkerStyle.Render("]"))
+
+	case fastjson.TypeString:
+		s := v.GetStringBytes()
+		sb.WriteString(jsonStringStyle.Render(quoteString(string(s))))
+
+	case fastjson.TypeNumber:
+		sb.WriteString(jsonNumberStyle.Render(string(v.MarshalTo(nil))))
+
+	case fastjson.TypeTrue:
+		sb.WriteString(jsonBoolStyle.Render("true"))
+	case fastjson.TypeFalse:
+		sb.WriteString(jsonBoolStyle.Render("false"))
+
+	case fastjson.TypeNull:
+		sb.WriteString(jsonNullStyle.Render("null"))
+	}
+}
+
+// quoteString wraps s in double quotes with JSON escaping.
+func quoteString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// applyBuiltinJSON finds and replaces JSON fragments in a line with colorized versions.
+// Non-JSON text is left unchanged for subsequent regex-based highlighting.
+func applyBuiltinJSON(line string) string {
+	fragments := findJSONFragments(line)
+	if len(fragments) == 0 {
+		return line
+	}
+
+	var sb strings.Builder
+	prev := 0
+	for _, frag := range fragments {
+		sb.WriteString(line[prev:frag.start])
+		sb.WriteString(colorizeJSON(line[frag.start:frag.end]))
+		prev = frag.end
+	}
+	sb.WriteString(line[prev:])
+	return sb.String()
+}
+
+// byteOffsetsToColumns converts byte offsets to column (display width) offsets
+// using incremental ansi.StringWidth calls on successive segments.
+// Offsets can be in any order; results correspond to input order.
+func byteOffsetsToColumns(line string, offsets []int) []int {
+	if len(offsets) == 0 {
+		return nil
+	}
+
+	type offsetEntry struct {
+		byteOff int
+		origIdx int
+	}
+	sorted := make([]offsetEntry, len(offsets))
+	for i, o := range offsets {
+		sorted[i] = offsetEntry{byteOff: o, origIdx: i}
+	}
+	slices.SortFunc(sorted, func(a, b offsetEntry) int {
+		return a.byteOff - b.byteOff
+	})
+
+	// Clamp all offsets to len(line) upfront to avoid mismatches
+	for i := range sorted {
+		if sorted[i].byteOff > len(line) {
+			sorted[i].byteOff = len(line)
+		}
+	}
+
+	result := make([]int, len(offsets))
+	lastByte := 0
+	lastCol := 0
+	nextIdx := 0
+
+	// Handle offset 0
+	for nextIdx < len(sorted) && sorted[nextIdx].byteOff == 0 {
+		result[sorted[nextIdx].origIdx] = 0
+		nextIdx++
+	}
+
+	for nextIdx < len(sorted) {
+		off := sorted[nextIdx].byteOff
+		// Add width of segment [lastByte:off]
+		lastCol += ansi.StringWidth(line[lastByte:off])
+		lastByte = off
+
+		for nextIdx < len(sorted) && sorted[nextIdx].byteOff == off {
+			result[sorted[nextIdx].origIdx] = lastCol
+			nextIdx++
+		}
+	}
+
+	return result
+}
+
 // LogView is a dedicated component for streaming pod logs with autoscroll,
-// filtering, search, and theme-configured highlights.
+// filtering, search, and built-in syntax highlighting.
 type LogView struct {
 	viewport   viewport.Model
-	buffer     *RingBuffer
+	buffer     *DualRingBuffer
 	focused    bool
 	borderless bool
 	width      int
@@ -48,106 +303,273 @@ type LogView struct {
 	matchIndex     int
 
 	// Highlights
-	highlights []compiledHighlight
+	builtinsEnabled bool
 
+	// Time range
+	timeRangeLabel string
+
+	// Virtual scroll
+	scrollOffset    int   // top-of-viewport line index in display list
+	filteredIndices []int // when filter active, logical buffer indices of matching lines
 }
 
 // NewLogView creates a new log view with the given dimensions and ring buffer capacity.
-// Highlight rules are compiled once; invalid regexps are silently skipped.
-func NewLogView(width, height, bufCapacity int, rules []theme.LogHighlightRule) LogView {
+func NewLogView(width, height, bufCapacity int) LogView {
 	vp := viewport.New(viewport.WithWidth(width-2), viewport.WithHeight(height-2))
 	vp.KeyMap.Left = key.NewBinding()
 	vp.KeyMap.Right = key.NewBinding()
 	vp.HighlightStyle = lipgloss.NewStyle().Background(theme.SearchMatch).Foreground(theme.SearchFg)
 	vp.SelectedHighlightStyle = lipgloss.NewStyle().Background(theme.SearchSelected).Foreground(theme.SearchFg).Bold(true)
 
-	var compiled []compiledHighlight
-	for _, rule := range rules {
-		re, err := regexp.Compile(rule.Pattern)
-		if err != nil {
-			continue
-		}
-		s := lipgloss.NewStyle()
-		if rule.Fg != "" {
-			s = s.Foreground(lipgloss.Color(rule.Fg))
-		}
-		if rule.Bg != "" {
-			s = s.Background(lipgloss.Color(rule.Bg))
-		}
-		if rule.Bold {
-			s = s.Bold(true)
-		}
-		compiled = append(compiled, compiledHighlight{re: re, style: s})
+	return LogView{
+		viewport:        vp,
+		buffer:          NewDualRingBuffer(bufCapacity),
+		width:           width,
+		height:          height,
+		autoscroll:      true,
+		builtinsEnabled: true,
+		timeRangeLabel:  "1m",
+	}
+}
+
+// viewportHeight returns the number of visible lines in the viewport.
+func (lv *LogView) viewportHeight() int {
+	if lv.borderless {
+		return lv.height
+	}
+	return lv.height - 2
+}
+
+// totalDisplayLines returns the total number of display lines (with indicator if present).
+func (lv *LogView) totalDisplayLines() int {
+	n := lv.buffer.Len()
+	if lv.filterState.Active() {
+		n = len(lv.filteredIndices)
+	}
+	if lv.buffer.Dropped() > 0 {
+		n++
+	}
+	return n
+}
+
+// clampScrollOffset ensures scrollOffset is within valid bounds.
+func (lv *LogView) clampScrollOffset() {
+	total := lv.totalDisplayLines()
+	h := lv.viewportHeight()
+	maxOffset := total - h
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if lv.scrollOffset > maxOffset {
+		lv.scrollOffset = maxOffset
+	}
+	if lv.scrollOffset < 0 {
+		lv.scrollOffset = 0
+	}
+}
+
+// updateViewport renders the visible window of lines into the viewport.
+// This is the fast path — O(H) instead of O(N).
+func (lv *LogView) updateViewport() {
+	if lv.viewport.SoftWrap {
+		lv.updateViewportWrapped()
+		return
+	}
+	lv.clampScrollOffset()
+	h := lv.viewportHeight()
+	hasIndicator := lv.buffer.Dropped() > 0
+
+	// Compute the visible line range
+	var total int
+	if lv.filterState.Active() {
+		total = len(lv.filteredIndices)
+	} else {
+		total = lv.buffer.Len()
+	}
+	indicatorOffset := 0
+	if hasIndicator {
+		indicatorOffset = 1
+	}
+	start := lv.scrollOffset - indicatorOffset
+	if start < 0 {
+		start = 0
+	}
+	end := start + h
+	if hasIndicator && lv.scrollOffset == 0 {
+		end--
+	}
+	if end > total {
+		end = total
+	}
+	if start > total {
+		start = total
 	}
 
-	return LogView{
-		viewport:   vp,
-		buffer:     NewRingBuffer(bufCapacity),
-		width:      width,
-		height:     height,
-		autoscroll: true,
-		highlights: compiled,
+	// Extract the visible window
+	var window []string
+	if lv.filterState.Active() {
+		for _, idx := range lv.filteredIndices[start:end] {
+			window = append(window, lv.buffer.ColoredGet(idx))
+		}
+	} else {
+		window = lv.buffer.ColoredSlice(start, end)
+	}
+
+	// Prepend indicator if visible
+	if hasIndicator && lv.scrollOffset == 0 {
+		indicator := fmt.Sprintf("~%d lines dropped", lv.buffer.Dropped())
+		window = append([]string{indicator}, window...)
+	}
+
+	// Bake search highlights into window if search active
+	if lv.searchState.Active() && len(lv.matchPositions) > 0 {
+		windowStart := lv.scrollOffset
+		windowEnd := lv.scrollOffset + len(window)
+		var windowPositions []matchPosition
+		for _, pos := range lv.matchPositions {
+			if pos.line >= windowStart && pos.line < windowEnd {
+				shifted := pos
+				shifted.line -= windowStart
+				windowPositions = append(windowPositions, shifted)
+			}
+		}
+		if len(windowPositions) > 0 {
+			selectedInWindow := -1
+			if lv.matchIndex >= 0 {
+				sel := lv.matchPositions[lv.matchIndex]
+				if sel.line >= windowStart && sel.line < windowEnd {
+					for i, wp := range windowPositions {
+						if wp.line == sel.line-windowStart && wp.colStart == sel.colStart {
+							selectedInWindow = i
+							break
+						}
+					}
+				}
+			}
+			joined := strings.Join(window, "\n")
+			highlighted := buildHighlightedDisplay(
+				joined, windowPositions, selectedInWindow,
+				lv.viewport.HighlightStyle, lv.viewport.SelectedHighlightStyle,
+			)
+			window = strings.Split(highlighted, "\n")
+		}
+	}
+
+	lv.viewport.SetContentLines(window)
+}
+
+// updateViewportWrapped feeds all display lines to the viewport and delegates
+// scrolling to the viewport's native wrap-aware scroll. This is used when
+// SoftWrap is enabled because the virtual scroll's logical-line math doesn't
+// account for wrapped visual rows.
+func (lv *LogView) updateViewportWrapped() {
+	// Build full display list
+	var lines []string
+	if lv.filterState.Active() {
+		for _, idx := range lv.filteredIndices {
+			lines = append(lines, lv.buffer.ColoredGet(idx))
+		}
+	} else {
+		lines = lv.buffer.ColoredAll()
+	}
+
+	// Prepend indicator if applicable
+	if lv.buffer.Dropped() > 0 {
+		indicator := fmt.Sprintf("~%d lines dropped", lv.buffer.Dropped())
+		lines = append([]string{indicator}, lines...)
+	}
+
+	// Bake search highlights
+	if lv.searchState.Active() && len(lv.matchPositions) > 0 {
+		selectedInWindow := -1
+		if lv.matchIndex >= 0 && lv.matchIndex < len(lv.matchPositions) {
+			selectedInWindow = lv.matchIndex
+		}
+		joined := strings.Join(lines, "\n")
+		highlighted := buildHighlightedDisplay(
+			joined, lv.matchPositions, selectedInWindow,
+			lv.viewport.HighlightStyle, lv.viewport.SelectedHighlightStyle,
+		)
+		lines = strings.Split(highlighted, "\n")
+	}
+
+	lv.viewport.SetContentLines(lines)
+	if lv.autoscroll {
+		lv.viewport.GotoBottom()
 	}
 }
 
 // AppendLine appends a log line to the ring buffer and updates the viewport.
 func (lv *LogView) AppendLine(line string) {
 	droppedBefore := lv.buffer.Dropped()
-	lv.buffer.Append(line)
+	lv.buffer.Append(line, lv.applyHighlights(line))
 
 	if lv.filterState.Active() {
 		evicted := lv.buffer.Dropped() > droppedBefore
-		if lv.filterState.Re.MatchString(line) || evicted {
-			lv.rebuildViewportContent()
-		}
-		return
-	}
-
-	lv.rebuildViewportContent()
-}
-
-// rebuildViewportContent rebuilds the viewport content from the ring buffer,
-// applying filter, highlights, and search as needed.
-func (lv *LogView) rebuildViewportContent() {
-	lines := lv.buffer.All()
-
-	// Apply filter if active
-	if lv.filterState.Active() {
-		var filtered []string
-		for _, line := range lines {
-			if lv.filterState.Re.MatchString(line) {
-				filtered = append(filtered, line)
+		// On eviction, decrement existing indices first since logical index 0 shifted
+		if evicted && len(lv.filteredIndices) > 0 {
+			for i := range lv.filteredIndices {
+				lv.filteredIndices[i]--
+			}
+			for len(lv.filteredIndices) > 0 && lv.filteredIndices[0] < 0 {
+				lv.filteredIndices = lv.filteredIndices[1:]
 			}
 		}
-		lines = filtered
+		// Then add the new line if it matches
+		matched := lv.filterState.Re.MatchString(line)
+		if matched {
+			lv.filteredIndices = append(lv.filteredIndices, lv.buffer.Len()-1)
+		}
+		if !matched && !evicted {
+			return // no viewport change needed
+		}
 	}
 
-	// Build raw content for search matching (real lines only, no indicator)
-	rawContent := strings.Join(lines, "\n")
+	if lv.autoscroll && !lv.viewport.SoftWrap {
+		lv.scrollOffset = lv.totalDisplayLines() - lv.viewportHeight()
+	}
+	lv.updateViewport()
+}
 
-	// Prepend dropped lines indicator for display only
+
+// rebuildViewportContent recomputes search match positions and updates the viewport.
+// Called on search/filter activation (user action), not on every append.
+func (lv *LogView) rebuildViewportContent() {
+	coloredLines := lv.buffer.ColoredAll()
+
+	var displayLines []string
+	if lv.filterState.Active() {
+		for _, idx := range lv.filteredIndices {
+			if idx >= 0 && idx < len(coloredLines) {
+				displayLines = append(displayLines, coloredLines[idx])
+			}
+		}
+	} else {
+		displayLines = coloredLines
+	}
+
 	hasIndicator := lv.buffer.Dropped() > 0
 	if hasIndicator {
-		indicator := fmt.Sprintf("~%d lines dropped", lv.buffer.Dropped())
-		lines = append([]string{indicator}, lines...)
+		displayLines = append([]string{fmt.Sprintf("~%d lines dropped", lv.buffer.Dropped())}, displayLines...)
 	}
 
-	// Apply theme highlight rules per line for display
-	displayLines := make([]string, len(lines))
-	for i, line := range lines {
-		displayLines[i] = lv.applyHighlights(line)
-	}
-	displayContent := strings.Join(displayLines, "\n")
-
-	// Apply search highlights — use ANSI-aware path when display differs from raw
 	lv.matchPositions = nil
 	lv.matchIndex = -1
 
 	if lv.searchState.Active() {
-		rawMatches := lv.searchState.Re.FindAllStringIndex(rawContent, -1)
-		positions := computeMatchPositions(rawContent, rawMatches)
+		searchLines := displayLines
+		if hasIndicator {
+			searchLines = displayLines[1:]
+		}
+		strippedLines := make([]string, len(searchLines))
+		for i, hl := range searchLines {
+			strippedLines[i] = ansi.Strip(hl)
+		}
+		strippedContent := strings.Join(strippedLines, "\n")
 
-		// Shift line indices to account for indicator in display
+		rawMatches := lv.searchState.Re.FindAllStringIndex(strippedContent, -1)
+		positions := computeMatchPositions(strippedContent, rawMatches)
+
 		if hasIndicator {
 			for i := range positions {
 				positions[i].line++
@@ -158,47 +580,81 @@ func (lv *LogView) rebuildViewportContent() {
 		if len(positions) > 0 {
 			lv.matchIndex = 0
 		}
-
-		if rawContent == displayContent {
-			// No theme highlights and no indicator: viewport can handle plain-text offsets
-			lv.viewport.SetContent(displayContent)
-			lv.viewport.SetHighlights(rawMatches)
-		} else {
-			// Theme highlights or indicator present: bake search highlights ourselves
-			highlighted := buildHighlightedDisplay(
-				displayContent, positions, lv.matchIndex,
-				lv.viewport.HighlightStyle, lv.viewport.SelectedHighlightStyle,
-			)
-			lv.viewport.SetContent(highlighted)
-		}
-	} else {
-		lv.viewport.SetContent(displayContent)
 	}
 
-	if lv.autoscroll {
-		lv.viewport.GotoBottom()
-	}
+	lv.updateViewport()
 }
 
-// applyHighlights applies compiled highlight rules to a single line using lipgloss.StyleRanges.
+// applyHighlights applies built-in highlight rules to a single line using lipgloss.StyleRanges.
 func (lv *LogView) applyHighlights(line string) string {
-	if len(lv.highlights) == 0 {
+	if !lv.builtinsEnabled {
 		return line
 	}
 
-	var ranges []lipgloss.Range
-	for _, h := range lv.highlights {
-		matches := h.re.FindAllStringIndex(line, -1)
-		for _, m := range matches {
-			colStart := ansi.StringWidth(line[:m[0]])
-			colEnd := ansi.StringWidth(line[:m[1]])
-			ranges = append(ranges, lipgloss.NewRange(colStart, colEnd, h.style))
+	line = applyBuiltinJSON(line)
+
+	type matchInfo struct {
+		startByte, endByte int
+		style              lipgloss.Style
+	}
+	var matches []matchInfo
+
+	// Log levels
+	for _, h := range builtinLogLevels {
+		for _, m := range h.re.FindAllStringIndex(line, -1) {
+			matches = append(matches, matchInfo{m[0], m[1], h.style})
 		}
 	}
 
-	if len(ranges) == 0 {
+	// Timestamps (submatch groups)
+	for _, sm := range builtinTimestamp.FindAllStringSubmatchIndex(line, -1) {
+		if sm[2] >= 0 && sm[3] >= 0 {
+			matches = append(matches, matchInfo{sm[2], sm[3], timestampDateStyle})
+		}
+		if sm[4] >= 0 && sm[5] >= 0 {
+			matches = append(matches, matchInfo{sm[4], sm[5], timestampTimeStyle})
+		}
+		if sm[6] >= 0 && sm[7] >= 0 {
+			matches = append(matches, matchInfo{sm[6], sm[7], timestampTZStyle})
+		}
+	}
+
+	// IPv4 with validation
+	for _, sm := range builtinIPv4.FindAllStringSubmatchIndex(line, -1) {
+		valid := true
+		for g := 1; g <= 4; g++ {
+			octetStr := line[sm[2*g]:sm[2*g+1]]
+			v, err := strconv.Atoi(octetStr)
+			if err != nil || v < 0 || v > 255 {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			matches = append(matches, matchInfo{sm[0], sm[1], builtinIPStyle})
+		}
+	}
+
+	if len(matches) == 0 {
 		return line
 	}
+
+	// Collect all byte offsets
+	offsets := make([]int, len(matches)*2)
+	for i, m := range matches {
+		offsets[i*2] = m.startByte
+		offsets[i*2+1] = m.endByte
+	}
+
+	// Single-pass conversion
+	cols := byteOffsetsToColumns(line, offsets)
+
+	// Build ranges using converted columns
+	ranges := make([]lipgloss.Range, len(matches))
+	for i, m := range matches {
+		ranges[i] = lipgloss.NewRange(cols[i*2], cols[i*2+1], m.style)
+	}
+
 	return lipgloss.StyleRanges(line, ranges...)
 }
 
@@ -233,6 +689,9 @@ func (lv LogView) buildTitle() string {
 	if lv.activeContainer != "" {
 		fmt.Fprintf(&sb, " [%s]", lv.activeContainer)
 	}
+	if lv.timeRangeLabel != "" {
+		sb.WriteString(" " + lv.timeRangeLabel)
+	}
 	if lv.autoscroll {
 		sb.WriteString(" [A]")
 	}
@@ -252,6 +711,13 @@ func (lv *LogView) ApplySearch(pattern string, mode msgs.SearchMode) error {
 		if err := lv.filterState.Compile(pattern, mode); err != nil {
 			return err
 		}
+		// Rebuild filtered indices
+		lv.filteredIndices = nil
+		for i := range lv.buffer.Len() {
+			if lv.filterState.Re.MatchString(lv.buffer.RawGet(i)) {
+				lv.filteredIndices = append(lv.filteredIndices, i)
+			}
+		}
 	} else {
 		if err := lv.searchState.Compile(pattern, mode); err != nil {
 			return err
@@ -267,13 +733,14 @@ func (lv *LogView) ClearSearch() {
 	lv.matchPositions = nil
 	lv.matchIndex = -1
 	lv.viewport.ClearHighlights()
-	lv.rebuildViewportContent()
+	lv.updateViewport()
 }
 
 // ClearFilter removes the active filter and restores all lines.
 func (lv *LogView) ClearFilter() {
 	lv.filterState.Clear()
-	lv.rebuildViewportContent()
+	lv.filteredIndices = nil
+	lv.updateViewport()
 }
 
 // SearchActive reports whether a search is active (highlights only).
@@ -291,75 +758,49 @@ func (lv LogView) AnyActive() bool {
 	return lv.searchState.Active() || lv.filterState.Active()
 }
 
-// SearchNext navigates to the next search match.
-func (lv *LogView) SearchNext() {
-	if !lv.searchState.Active() {
+// ensureMatchVisible adjusts scrollOffset so the current match is visible.
+func (lv *LogView) ensureMatchVisible() {
+	if lv.matchIndex < 0 || lv.matchIndex >= len(lv.matchPositions) {
 		return
 	}
-	if len(lv.matchPositions) > 0 {
-		lv.matchIndex = (lv.matchIndex + 1) % len(lv.matchPositions)
-		lv.rebuildSearchHighlights()
-		pos := lv.matchPositions[lv.matchIndex]
-		lv.viewport.EnsureVisible(pos.line, pos.colStart, pos.colEnd)
-	} else {
-		lv.viewport.HighlightNext()
+	pos := lv.matchPositions[lv.matchIndex]
+	if lv.viewport.SoftWrap {
+		lv.viewport.SetYOffset(pos.line)
+		lv.autoscroll = false
+		return
 	}
+	h := lv.viewportHeight()
+	if pos.line < lv.scrollOffset {
+		lv.scrollOffset = pos.line
+	} else if pos.line >= lv.scrollOffset+h {
+		lv.scrollOffset = pos.line - h + 1
+	}
+	lv.autoscroll = false
+}
+
+// SearchNext navigates to the next search match.
+func (lv *LogView) SearchNext() {
+	if !lv.searchState.Active() || len(lv.matchPositions) == 0 {
+		return
+	}
+	lv.matchIndex = (lv.matchIndex + 1) % len(lv.matchPositions)
+	lv.ensureMatchVisible()
+	lv.updateViewport()
 }
 
 // SearchPrev navigates to the previous search match.
 func (lv *LogView) SearchPrev() {
-	if !lv.searchState.Active() {
+	if !lv.searchState.Active() || len(lv.matchPositions) == 0 {
 		return
 	}
-	if len(lv.matchPositions) > 0 {
-		lv.matchIndex--
-		if lv.matchIndex < 0 {
-			lv.matchIndex = len(lv.matchPositions) - 1
-		}
-		lv.rebuildSearchHighlights()
-		pos := lv.matchPositions[lv.matchIndex]
-		lv.viewport.EnsureVisible(pos.line, pos.colStart, pos.colEnd)
-	} else {
-		lv.viewport.HighlightPrevious()
+	lv.matchIndex--
+	if lv.matchIndex < 0 {
+		lv.matchIndex = len(lv.matchPositions) - 1
 	}
+	lv.ensureMatchVisible()
+	lv.updateViewport()
 }
 
-// rebuildSearchHighlights re-applies search highlights with the current matchIndex,
-// preserving the viewport scroll position. Unlike rebuildViewportContent, this
-// directly builds highlighted display without resetting match state.
-func (lv *LogView) rebuildSearchHighlights() {
-	y := lv.viewport.YOffset()
-	x := lv.viewport.XOffset()
-
-	// Rebuild display lines with theme highlights
-	lines := lv.buffer.All()
-	if lv.filterState.Active() {
-		var filtered []string
-		for _, line := range lines {
-			if lv.filterState.Re.MatchString(line) {
-				filtered = append(filtered, line)
-			}
-		}
-		lines = filtered
-	}
-	if lv.buffer.Dropped() > 0 {
-		indicator := fmt.Sprintf("~%d lines dropped", lv.buffer.Dropped())
-		lines = append([]string{indicator}, lines...)
-	}
-	displayLines := make([]string, len(lines))
-	for i, line := range lines {
-		displayLines[i] = lv.applyHighlights(line)
-	}
-	displayContent := strings.Join(displayLines, "\n")
-
-	highlighted := buildHighlightedDisplay(
-		displayContent, lv.matchPositions, lv.matchIndex,
-		lv.viewport.HighlightStyle, lv.viewport.SelectedHighlightStyle,
-	)
-	lv.viewport.SetContent(highlighted)
-	lv.viewport.SetYOffset(y)
-	lv.viewport.SetXOffset(x)
-}
 
 // SetSize updates the dimensions of the log view.
 func (lv *LogView) SetSize(w, h int) {
@@ -372,6 +813,7 @@ func (lv *LogView) SetSize(w, h int) {
 		lv.viewport.SetWidth(w - 2)
 		lv.viewport.SetHeight(h - 2)
 	}
+	lv.updateViewport()
 }
 
 // SetBorderless enables or disables borderless rendering.
@@ -401,12 +843,54 @@ func (lv LogView) Autoscroll() bool {
 	return lv.autoscroll
 }
 
+// SyntaxEnabled reports whether built-in syntax highlighting is enabled.
+func (lv LogView) SyntaxEnabled() bool {
+	return lv.builtinsEnabled
+}
+
+// ToggleSyntax toggles built-in syntax highlighting on/off and re-renders.
+func (lv *LogView) ToggleSyntax() {
+	lv.builtinsEnabled = !lv.builtinsEnabled
+	for i := range lv.buffer.Len() {
+		lv.buffer.SetColored(i, lv.applyHighlights(lv.buffer.RawGet(i)))
+	}
+	if lv.searchState.Active() {
+		lv.rebuildViewportContent()
+	} else {
+		lv.updateViewport()
+	}
+}
+
 // ToggleAutoscroll toggles autoscroll on/off.
 func (lv *LogView) ToggleAutoscroll() {
 	lv.autoscroll = !lv.autoscroll
 	if lv.autoscroll {
-		lv.rebuildViewportContent()
+		if lv.viewport.SoftWrap {
+			lv.viewport.GotoBottom()
+		} else {
+			lv.scrollOffset = lv.totalDisplayLines() - lv.viewportHeight()
+			lv.updateViewport()
+		}
 	}
+}
+
+// InsertMarker inserts a dimmed timestamp marker line into the log buffer.
+func (lv *LogView) InsertMarker() {
+	raw := fmt.Sprintf("--- %s ---", time.Now().Format("15:04:05"))
+	styled := lipgloss.NewStyle().Foreground(theme.Muted).Faint(true).Render(raw)
+	lv.buffer.Append(raw, styled)
+	if lv.filterState.Active() {
+		lv.filteredIndices = append(lv.filteredIndices, lv.buffer.Len()-1)
+	}
+	if lv.autoscroll && !lv.viewport.SoftWrap {
+		lv.scrollOffset = lv.totalDisplayLines() - lv.viewportHeight()
+	}
+	lv.updateViewport()
+}
+
+// BufferLen returns the number of lines in the log buffer.
+func (lv *LogView) BufferLen() int {
+	return lv.buffer.Len()
 }
 
 // SetInlineSearch sets the inline search input text for rendering in the title.
@@ -420,10 +904,34 @@ func (lv LogView) Update(msg tea.Msg) (LogView, tea.Cmd) {
 }
 
 // ScrollUp scrolls the viewport up by one line.
-func (lv *LogView) ScrollUp() { lv.viewport.ScrollUp(1) }
+func (lv *LogView) ScrollUp() {
+	if lv.viewport.SoftWrap {
+		lv.viewport.ScrollUp(1)
+		lv.autoscroll = false
+		return
+	}
+	lv.scrollOffset--
+	lv.autoscroll = false
+	lv.updateViewport()
+}
 
 // ScrollDown scrolls the viewport down by one line.
-func (lv *LogView) ScrollDown() { lv.viewport.ScrollDown(1) }
+func (lv *LogView) ScrollDown() {
+	if lv.viewport.SoftWrap {
+		lv.viewport.ScrollDown(1)
+		if lv.viewport.AtBottom() {
+			lv.autoscroll = true
+		}
+		return
+	}
+	lv.scrollOffset++
+	total := lv.totalDisplayLines()
+	h := lv.viewportHeight()
+	if lv.scrollOffset >= total-h {
+		lv.autoscroll = true
+	}
+	lv.updateViewport()
+}
 
 // ScrollLeft scrolls the viewport left by hScrollStep columns.
 func (lv *LogView) ScrollLeft() {
@@ -440,16 +948,58 @@ func (lv *LogView) ScrollRight() {
 }
 
 // PageUp scrolls the viewport up by one page.
-func (lv *LogView) PageUp() { lv.viewport.PageUp() }
+func (lv *LogView) PageUp() {
+	if lv.viewport.SoftWrap {
+		lv.viewport.HalfPageUp()
+		lv.autoscroll = false
+		return
+	}
+	lv.scrollOffset -= lv.viewportHeight()
+	lv.autoscroll = false
+	lv.updateViewport()
+}
 
 // PageDown scrolls the viewport down by one page.
-func (lv *LogView) PageDown() { lv.viewport.PageDown() }
+func (lv *LogView) PageDown() {
+	if lv.viewport.SoftWrap {
+		lv.viewport.HalfPageDown()
+		if lv.viewport.AtBottom() {
+			lv.autoscroll = true
+		}
+		return
+	}
+	lv.scrollOffset += lv.viewportHeight()
+	total := lv.totalDisplayLines()
+	h := lv.viewportHeight()
+	if lv.scrollOffset >= total-h {
+		lv.autoscroll = true
+	}
+	lv.updateViewport()
+}
 
 // GotoTop scrolls to the top of the content.
-func (lv *LogView) GotoTop() { lv.viewport.GotoTop() }
+func (lv *LogView) GotoTop() {
+	if lv.viewport.SoftWrap {
+		lv.viewport.GotoTop()
+		lv.autoscroll = false
+		return
+	}
+	lv.scrollOffset = 0
+	lv.autoscroll = false
+	lv.updateViewport()
+}
 
 // GotoBottom scrolls to the bottom of the content.
-func (lv *LogView) GotoBottom() { lv.viewport.GotoBottom() }
+func (lv *LogView) GotoBottom() {
+	if lv.viewport.SoftWrap {
+		lv.viewport.GotoBottom()
+		lv.autoscroll = true
+		return
+	}
+	lv.scrollOffset = lv.totalDisplayLines() - lv.viewportHeight()
+	lv.autoscroll = true
+	lv.updateViewport()
+}
 
 // ToggleWrap toggles soft-wrap on the viewport. When enabling wrap,
 // the horizontal offset is reset since horizontal scroll is a no-op.
@@ -457,7 +1007,10 @@ func (lv *LogView) ToggleWrap() {
 	lv.viewport.SoftWrap = !lv.viewport.SoftWrap
 	if lv.viewport.SoftWrap {
 		lv.viewport.SetXOffset(0)
+	} else if lv.autoscroll {
+		lv.scrollOffset = lv.totalDisplayLines() - lv.viewportHeight()
 	}
+	lv.updateViewport()
 }
 
 // SetContainers sets the list of available containers for the log view.
@@ -480,15 +1033,23 @@ func (lv *LogView) SetActiveContainer(name string) {
 	lv.activeContainer = name
 }
 
+// SetTimeRangeLabel sets the displayed time range label in the title.
+func (lv *LogView) SetTimeRangeLabel(label string) {
+	lv.timeRangeLabel = label
+}
+
 // ClearAndRestart resets the ring buffer, clears viewport content,
 // and re-enables autoscroll for a fresh log stream.
 func (lv *LogView) ClearAndRestart() {
 	lv.buffer.Reset()
-	lv.viewport.SetContent("")
+	lv.viewport.SetContentLines(nil)
 	lv.viewport.ClearHighlights()
 	lv.matchPositions = nil
 	lv.matchIndex = -1
+	lv.scrollOffset = 0
+	lv.filteredIndices = nil
 	lv.autoscroll = true
+	lv.timeRangeLabel = "1m"
 	lv.filterState.Clear()
 	lv.searchState.Clear()
 }

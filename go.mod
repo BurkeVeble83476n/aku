@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/go-logr/logr v1.4.3
 	github.com/muesli/cancelreader v0.2.2
+	github.com/valyala/fastjson v1.6.10
 	golang.org/x/term v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v3 v3.20.0

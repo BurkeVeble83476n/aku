@@ -4,7 +4,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/aohoyd/aku/internal/plugin"
-	"github.com/aohoyd/aku/internal/theme"
 	"github.com/aohoyd/aku/internal/ui"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -50,7 +49,7 @@ type Layout struct {
 func New(width, height, logBufSize int) Layout {
 	contentH := height - statusBarHeight
 	dp := ui.NewDetailView(0, contentH)
-	lv := ui.NewLogView(0, contentH, logBufSize, theme.LogHighlights)
+	lv := ui.NewLogView(0, contentH, logBufSize)
 	return Layout{
 		width:      width,
 		height:     contentH,

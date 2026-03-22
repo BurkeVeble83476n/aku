@@ -480,6 +480,7 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		lv := a.layout.LogView()
 		lv.ClearAndRestart()
+		lv.SetTimeRangeLabel(msg.Label)
 		// Build LogOptions from selection
 		opts := k8s.LogOptions{Follow: true}
 		if msg.SinceSeconds != nil {

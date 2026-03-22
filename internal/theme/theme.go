@@ -57,17 +57,6 @@ var (
 	SearchFg       Color = "#1F1F28" // SumiInk0 — search match fg
 )
 
-// LogHighlightRule defines a word/regex highlight for log views.
-type LogHighlightRule struct {
-	Pattern string `yaml:"pattern"`
-	Fg      string `yaml:"fg"`
-	Bg      string `yaml:"bg"`
-	Bold    bool   `yaml:"bold"`
-}
-
-// Log highlight rules loaded from theme.
-var LogHighlights []LogHighlightRule
-
 func init() {
 	_ = Load(ThemePath())
 }
@@ -128,22 +117,6 @@ func Load(path string) error {
 		setIf(&SearchSelected, f.Search.Selected)
 		setIf(&SearchFg, f.Search.Fg)
 	}
-	if len(f.Highlights) > 0 {
-		LogHighlights = make([]LogHighlightRule, 0, len(f.Highlights))
-		for _, h := range f.Highlights {
-			if h.Pattern == nil {
-				continue
-			}
-			rule := LogHighlightRule{Pattern: *h.Pattern, Bold: h.Bold}
-			if h.Fg != nil {
-				rule.Fg = *h.Fg
-			}
-			if h.Bg != nil {
-				rule.Bg = *h.Bg
-			}
-			LogHighlights = append(LogHighlights, rule)
-		}
-	}
 	return nil
 }
 
@@ -158,7 +131,6 @@ type themeFile struct {
 	Status     *statusColors    `yaml:"status"`
 	Syntax     *syntaxColors    `yaml:"syntax"`
 	Search     *searchColors    `yaml:"search"`
-	Highlights []highlightEntry `yaml:"highlights"`
 }
 
 type uiColors struct {
@@ -194,11 +166,4 @@ type searchColors struct {
 	Match    *string `yaml:"match"`
 	Selected *string `yaml:"selected"`
 	Fg       *string `yaml:"fg"`
-}
-
-type highlightEntry struct {
-	Pattern *string `yaml:"pattern"`
-	Fg      *string `yaml:"fg"`
-	Bg      *string `yaml:"bg"`
-	Bold    bool    `yaml:"bold"`
 }

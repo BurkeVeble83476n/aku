@@ -2070,6 +2070,46 @@ func TestReloadAllWithDetailPanel(t *testing.T) {
 	}
 }
 
+func TestReloadAllPreservesLogMode(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Enable log mode with right panel visible
+	app.layout.SetLogMode(true)
+	app.layout.ShowRightPanel()
+
+	if !app.layout.IsLogMode() {
+		t.Fatal("expected log mode to be active before reload")
+	}
+
+	// Execute reload-all
+	model, _ := app.executeCommand("reload-all")
+	app = model.(App)
+
+	// Log mode should be preserved
+	if !app.layout.IsLogMode() {
+		t.Fatal("expected log mode to be preserved after reload-all")
+	}
+	// Right panel should still be visible
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("expected right panel to remain visible after reload-all in log mode")
+	}
+	// Focus should be on resources (not details)
+	if app.layout.FocusedDetails() {
+		t.Fatal("expected focus on resources after reload")
+	}
+	// Log view should be marked unavailable, awaiting objects from informer
+	if lv := app.layout.LogView(); lv == nil || !lv.IsUnavailable() {
+		t.Fatal("expected log view to be marked unavailable, awaiting objects")
+	}
+}
+
 func TestQuitWithRightPanelPerformsFullCleanup(t *testing.T) {
 	app := newTestApp()
 
@@ -2584,4 +2624,25 @@ func TestSubstituteVarsParent(t *testing.T) {
 			t.Fatalf("expected $PARENT to resolve to %q for deployments, got %q", "", got)
 		}
 	})
+}
+
+func TestLogInsertMarkerCommand(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+	app.layout.SetLogMode(true)
+	app.layout.ShowRightPanel()
+
+	model, _ := app.executeCommand("log-insert-marker")
+	app = model.(App)
+
+	lv := app.layout.LogView()
+	if lv.BufferLen() == 0 {
+		t.Fatal("expected marker line in buffer")
+	}
 }

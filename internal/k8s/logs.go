@@ -15,12 +15,12 @@ type LogOptions struct {
 	Follow       bool
 }
 
-// DefaultLogOptions returns sensible defaults: tail 200 lines, follow enabled.
+// DefaultLogOptions returns sensible defaults: since 1 minute, follow enabled.
 func DefaultLogOptions() LogOptions {
-	tailLines := int64(200)
+	sinceSeconds := int64(60)
 	return LogOptions{
-		TailLines: &tailLines,
-		Follow:    true,
+		SinceSeconds: &sinceSeconds,
+		Follow:       true,
 	}
 }
 

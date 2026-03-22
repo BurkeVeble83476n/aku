@@ -1,15 +1,17 @@
 package ui
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/aohoyd/aku/internal/msgs"
-	"github.com/aohoyd/aku/internal/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestLogView_AppendLine(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	lv.AppendLine("hello")
 	lv.AppendLine("world")
 	if lv.buffer.Len() != 2 {
@@ -18,7 +20,7 @@ func TestLogView_AppendLine(t *testing.T) {
 }
 
 func TestLogView_Autoscroll(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	if !lv.Autoscroll() {
 		t.Fatal("autoscroll should be on by default")
 	}
@@ -33,12 +35,12 @@ func TestLogView_Autoscroll(t *testing.T) {
 }
 
 func TestLogView_Searchable(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	var _ Searchable = &lv
 }
 
 func TestLogView_FilterHidesLines(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	lv.AppendLine("error: something failed")
 	lv.AppendLine("info: all good")
 	lv.AppendLine("error: another failure")
@@ -51,7 +53,7 @@ func TestLogView_FilterHidesLines(t *testing.T) {
 }
 
 func TestLogView_SearchMatchPositions(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	lv.AppendLine("foo bar")
 	lv.AppendLine("foo baz")
 	lv.AppendLine("foo qux")
@@ -68,7 +70,7 @@ func TestLogView_SearchMatchPositions(t *testing.T) {
 }
 
 func TestLogView_SearchNavigationWraps(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	lv.AppendLine("foo bar")
 	lv.AppendLine("foo baz")
 
@@ -96,31 +98,8 @@ func TestLogView_SearchNavigationWraps(t *testing.T) {
 	}
 }
 
-func TestLogView_SearchWithHighlightRules(t *testing.T) {
-	rules := []theme.LogHighlightRule{
-		{Pattern: "ERROR", Fg: "#ff0000", Bold: true},
-	}
-	lv := NewLogView(80, 24, 100, rules)
-	lv.AppendLine("INFO: all good")
-	lv.AppendLine("ERROR: something failed")
-	lv.AppendLine("INFO: recovered")
-
-	if err := lv.ApplySearch("something", msgs.SearchModeSearch); err != nil {
-		t.Fatalf("ApplySearch: %v", err)
-	}
-	// With highlight rules active, matchPositions should be populated
-	// (ANSI-aware path)
-	if len(lv.matchPositions) != 1 {
-		t.Fatalf("expected 1 match, got %d", len(lv.matchPositions))
-	}
-	pos := lv.matchPositions[0]
-	if pos.line != 1 {
-		t.Errorf("expected match on line 1, got %d", pos.line)
-	}
-}
-
 func TestLogView_ClearSearchResetsMatchState(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	lv.AppendLine("foo bar")
 
 	if err := lv.ApplySearch("foo", msgs.SearchModeSearch); err != nil {
@@ -141,7 +120,7 @@ func TestLogView_ClearSearchResetsMatchState(t *testing.T) {
 
 func TestLogView_FilterEvictionTriggersRebuild(t *testing.T) {
 	// Capacity 5 buffer, filter active for "error"
-	lv := NewLogView(80, 24, 5, nil)
+	lv := NewLogView(80, 24, 5)
 	if err := lv.ApplySearch("error", msgs.SearchModeFilter); err != nil {
 		t.Fatalf("ApplySearch: %v", err)
 	}
@@ -176,9 +155,35 @@ func TestLogView_FilterEvictionTriggersRebuild(t *testing.T) {
 	}
 }
 
+func TestLogView_FilterEvictionWithMatchingLine(t *testing.T) {
+	lv := NewLogView(80, 24, 3)
+	if err := lv.ApplySearch("error", msgs.SearchModeFilter); err != nil {
+		t.Fatalf("ApplySearch: %v", err)
+	}
+	lv.AppendLine("error: one")
+	lv.AppendLine("info: two")
+	lv.AppendLine("error: three")
+	// Buffer full: ["error: one", "info: two", "error: three"]
+
+	// Append matching line that also triggers eviction
+	lv.AppendLine("error: four") // evicts "error: one"
+	// Buffer: ["info: two", "error: three", "error: four"]
+
+	content := lv.viewport.View()
+	if !strings.Contains(content, "error: four") {
+		t.Fatal("new matching line 'error: four' should be visible after eviction")
+	}
+	if !strings.Contains(content, "error: three") {
+		t.Fatal("existing matching line 'error: three' should remain visible")
+	}
+	if strings.Contains(content, "error: one") {
+		t.Fatal("evicted line 'error: one' should not appear")
+	}
+}
+
 func TestLogView_SearchDoesNotMatchDroppedIndicator(t *testing.T) {
 	// Capacity 3 buffer — fill with 4 lines to trigger dropped indicator
-	lv := NewLogView(80, 24, 3, nil)
+	lv := NewLogView(80, 24, 3)
 	lv.AppendLine("alpha")
 	lv.AppendLine("beta")
 	lv.AppendLine("gamma")
@@ -195,7 +200,7 @@ func TestLogView_SearchDoesNotMatchDroppedIndicator(t *testing.T) {
 
 func TestLogView_SearchMatchIndicesWithIndicator(t *testing.T) {
 	// Capacity 3 buffer — fill with 4 lines to trigger dropped indicator
-	lv := NewLogView(80, 24, 3, nil)
+	lv := NewLogView(80, 24, 3)
 	lv.AppendLine("alpha")
 	lv.AppendLine("foo bar")
 	lv.AppendLine("baz")
@@ -220,15 +225,15 @@ func TestLogView_SearchMatchIndicesWithIndicator(t *testing.T) {
 }
 
 func TestLogView_Unavailable(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 
 	// Initially available
 	if lv.IsUnavailable() {
 		t.Fatal("expected available by default")
 	}
 	title := lv.buildTitle()
-	if title != "Logs [A]" {
-		t.Fatalf("expected default title 'Logs [A]', got %q", title)
+	if title != "Logs 1m [A]" {
+		t.Fatalf("expected default title 'Logs 1m [A]', got %q", title)
 	}
 
 	// Set unavailable
@@ -247,13 +252,13 @@ func TestLogView_Unavailable(t *testing.T) {
 		t.Fatal("expected available after SetUnavailable(false)")
 	}
 	title = lv.buildTitle()
-	if title != "Logs [A]" {
+	if title != "Logs 1m [A]" {
 		t.Fatalf("expected default title after clearing unavailable, got %q", title)
 	}
 }
 
 func TestLogView_ClearAndRestartResetsFilterAndSearch(t *testing.T) {
-	lv := NewLogView(80, 24, 100, nil)
+	lv := NewLogView(80, 24, 100)
 	lv.AppendLine("error: something failed")
 	lv.AppendLine("info: all good")
 
@@ -287,22 +292,641 @@ func TestLogView_ClearAndRestartResetsFilterAndSearch(t *testing.T) {
 	}
 }
 
-func TestLogView_ApplyHighlightsMultiByte(t *testing.T) {
-	rules := []theme.LogHighlightRule{
-		{Pattern: "ready", Fg: "#00ff00"},
-	}
-	lv := NewLogView(80, 24, 100, rules)
+func TestLogView_BuiltinLogLevelHighlighting(t *testing.T) {
+	lv := NewLogView(80, 24, 100) // no user rules
 
-	// Line with multi-byte prefix: "✓" is 3 bytes (E2 9C 93) but 1 grapheme column
-	line := "✓ pod ready"
+	// ERROR should be highlighted
+	line := "2024-01-01 ERROR something failed"
+	result := lv.applyHighlights(line)
+	if result == line {
+		t.Fatal("expected ERROR to be highlighted")
+	}
+	if !strings.Contains(result, "ERROR") {
+		t.Fatal("ERROR text should still be present")
+	}
+}
+
+func TestLogView_BuiltinHighlightAllLevels(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	levels := []string{
+		"ERROR", "FATAL", "WARN", "WARNING", "INFO", "DEBUG", "TRACE",
+		"error", "fatal", "warn", "warning", "info", "debug", "trace",
+		"Error", "Fatal", "Warn", "Warning", "Info", "Debug", "Trace",
+		"ERR", "err", "Err",
+		"DBG", "dbg", "Dbg",
+	}
+	for _, level := range levels {
+		line := "prefix " + level + " suffix"
+		result := lv.applyHighlights(line)
+		if result == line {
+			t.Fatalf("expected %s to be highlighted", level)
+		}
+	}
+}
+
+func TestLogView_BuiltinHighlightWordBoundary(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	// "INFORMATIONAL" should NOT match "INFO" as a word
+	line := "INFORMATIONAL message"
+	result := lv.applyHighlights(line)
+	if result != line {
+		t.Fatal("INFORMATIONAL should not trigger INFO highlight (word boundary)")
+	}
+	// "informational" should also NOT match
+	line = "informational message"
+	result = lv.applyHighlights(line)
+	if result != line {
+		t.Fatal("informational should not trigger info highlight (word boundary)")
+	}
+	// "errors" should NOT match "error"
+	line = "errors happened"
+	result = lv.applyHighlights(line)
+	if result != line {
+		t.Fatal("errors should not trigger error highlight (word boundary)")
+	}
+}
+
+func TestLogView_BuiltinTimestampHighlighting(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	// ISO 8601 timestamp
+	line := "2024-03-22T14:30:00.123Z INFO starting server"
+	result := lv.applyHighlights(line)
+	if result == line {
+		t.Fatal("expected timestamp to be highlighted")
+	}
+	// Both date and time parts should be present
+	if !strings.Contains(result, "2024-03-22") {
+		t.Fatal("date part should be present")
+	}
+	if !strings.Contains(result, "14:30:00.123") {
+		t.Fatal("time part should be present")
+	}
+}
+
+func TestLogView_BuiltinTimestampVariants(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	variants := []string{
+		"2024-03-22T14:30:00Z message",        // Z timezone
+		"2024-03-22T14:30:00+05:30 message",   // offset timezone
+		"2024-03-22 14:30:00.123456 message",   // space separator, microseconds
+		"2024-03-22T14:30:00 message",          // no fractional, no tz
+	}
+	for _, line := range variants {
+		result := lv.applyHighlights(line)
+		if result == line {
+			t.Fatalf("expected timestamp to be highlighted in: %s", line)
+		}
+	}
+}
+
+func TestLogView_BuiltinIPHighlighting(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := "connection from 192.168.1.100:8080 accepted"
+	result := lv.applyHighlights(line)
+	if result == line {
+		t.Fatal("expected IP address to be highlighted")
+	}
+	if !strings.Contains(result, "192.168.1.100:8080") {
+		t.Fatal("IP:port should be present in output")
+	}
+}
+
+func TestLogView_BuiltinIPWithoutPort(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := "resolved to 10.0.0.1"
+	result := lv.applyHighlights(line)
+	if result == line {
+		t.Fatal("expected IP without port to be highlighted")
+	}
+}
+
+func TestLogView_BuiltinIPInvalidOctet(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	// 999.999.999.999 looks like an IP but has invalid octets
+	line := "version 999.999.999.999"
+	result := lv.applyHighlights(line)
+	if result != line {
+		t.Fatal("invalid IP octets should not be highlighted")
+	}
+}
+
+func TestLogView_BuiltinJSONReformat(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := `prefix {"message":"hello","count":42} suffix`
 	result := lv.applyHighlights(line)
 
-	// The result should contain ANSI codes highlighting "ready"
-	if result == line {
-		t.Fatal("expected highlights to be applied")
+	// Should be reformatted with spaces
+	if !strings.Contains(ansi.Strip(result), `"message": "hello"`) {
+		t.Fatalf("expected JSON to be reformatted with spaces, got: %s", ansi.Strip(result))
 	}
-	// "ready" should still be present in the output (not garbled)
-	if !strings.Contains(result, "ready") {
-		t.Fatalf("expected 'ready' in highlighted output, got %q", result)
+}
+
+func TestLogView_BuiltinJSONColoring(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := `{"level":"info"}`
+	result := lv.applyHighlights(line)
+
+	// Should have ANSI codes (colorized)
+	if result == line {
+		t.Fatal("expected JSON to be colorized")
+	}
+	// Plain text content should still be readable
+	stripped := ansi.Strip(result)
+	if !strings.Contains(stripped, "level") {
+		t.Fatal("JSON key should be present in stripped output")
+	}
+}
+
+func TestLogView_BuiltinJSONNestedObject(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := `log {"a":{"b":1}} end`
+	result := lv.applyHighlights(line)
+	stripped := ansi.Strip(result)
+	if !strings.Contains(stripped, `"a"`) {
+		t.Fatal("nested JSON should be reformatted")
+	}
+	// Verify colon separator between key and nested object value
+	if !strings.Contains(stripped, `"a": { "b": 1 }`) {
+		t.Fatalf("expected nested object with colon separator, got: %s", stripped)
+	}
+}
+
+func TestLogView_BuiltinJSONNestedArrayInObject(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := `{"items":[1,2]}`
+	result := lv.applyHighlights(line)
+	stripped := ansi.Strip(result)
+	if !strings.Contains(stripped, `"items": [1, 2]`) {
+		t.Fatalf("expected colon before nested array, got: %s", stripped)
+	}
+}
+
+func TestLogView_BuiltinJSONArray(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := `items: [1,2,3]`
+	result := lv.applyHighlights(line)
+	stripped := ansi.Strip(result)
+	if !strings.Contains(stripped, "[1, 2, 3]") {
+		t.Fatalf("expected JSON array to be reformatted, got: %s", stripped)
+	}
+}
+
+func TestLogView_BuiltinJSONInvalidIgnored(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	// Looks like JSON start but isn't valid
+	line := `not json {invalid`
+	result := lv.applyHighlights(line)
+	// Should not crash; invalid JSON is left as-is (though log level/timestamp/IP highlighting may still apply)
+	if !strings.Contains(ansi.Strip(result), "{invalid") {
+		t.Fatal("invalid JSON should be left unchanged")
+	}
+}
+
+func TestLogView_BuiltinJSONPreservesPrefix(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	line := `2024-01-01T00:00:00Z INFO {"msg":"hello"}`
+	result := lv.applyHighlights(line)
+	stripped := ansi.Strip(result)
+	// Prefix text should still be there
+	if !strings.Contains(stripped, "INFO") {
+		t.Fatal("prefix before JSON should be preserved")
+	}
+}
+
+func TestLogView_ToggleSyntaxHighlighting(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	// Built-ins should be enabled by default
+	if !lv.SyntaxEnabled() {
+		t.Fatal("syntax highlighting should be enabled by default")
+	}
+
+	// With builtins enabled, ERROR should be highlighted
+	line := "ERROR something failed"
+	result := lv.applyHighlights(line)
+	if result == line {
+		t.Fatal("ERROR should be highlighted when syntax is enabled")
+	}
+
+	// Toggle off
+	lv.ToggleSyntax()
+	if lv.SyntaxEnabled() {
+		t.Fatal("syntax highlighting should be disabled after toggle")
+	}
+
+	// With builtins disabled, ERROR should NOT be highlighted (no user rules)
+	result = lv.applyHighlights(line)
+	if result != line {
+		t.Fatal("ERROR should not be highlighted when syntax is disabled")
+	}
+
+	// Toggle back on
+	lv.ToggleSyntax()
+	if !lv.SyntaxEnabled() {
+		t.Fatal("syntax highlighting should be re-enabled after second toggle")
+	}
+}
+
+func TestLogView_ToggleSyntaxRecomputesSearchPositions(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	lv.AppendLine("2024-01-01T00:00:00Z ERROR something failed")
+
+	// Search while syntax is ON
+	if err := lv.ApplySearch("failed", msgs.SearchModeSearch); err != nil {
+		t.Fatalf("ApplySearch: %v", err)
+	}
+	if len(lv.matchPositions) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(lv.matchPositions))
+	}
+	posBefore := lv.matchPositions[0]
+
+	// Toggle syntax OFF — match positions should be recomputed
+	lv.ToggleSyntax()
+	if len(lv.matchPositions) != 1 {
+		t.Fatalf("expected 1 match after toggle, got %d", len(lv.matchPositions))
+	}
+	posAfter := lv.matchPositions[0]
+
+	// Column positions should differ (syntax ON has ANSI-expanded text)
+	if posBefore.colStart == posAfter.colStart && posBefore.colEnd == posAfter.colEnd {
+		t.Fatal("expected match positions to change after toggling syntax")
+	}
+}
+
+func TestLogView_TimeRangeInTitle(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	// Default title should show "1m" time range, no [S]
+	title := lv.buildTitle()
+	if strings.Contains(title, "[S]") {
+		t.Fatalf("expected no [S] in title, got: %s", title)
+	}
+	if !strings.Contains(title, "1m") {
+		t.Fatalf("expected '1m' in title, got: %s", title)
+	}
+
+	// Set a different time range
+	lv.SetTimeRangeLabel("5m")
+	title = lv.buildTitle()
+	if !strings.Contains(title, "5m") {
+		t.Fatalf("expected '5m' in title, got: %s", title)
+	}
+
+	// ClearAndRestart should reset to default "1m"
+	lv.ClearAndRestart()
+	title = lv.buildTitle()
+	if !strings.Contains(title, "1m") {
+		t.Fatalf("expected '1m' after ClearAndRestart, got: %s", title)
+	}
+}
+
+func TestLogView_BuiltinJSONWithLogLevel(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	// JSON containing "ERROR" as a value — ERROR inside JSON should be colored
+	// by JSON coloring, not double-colored by log level regex
+	line := `2024-01-01T00:00:00Z {"level":"ERROR","msg":"failed"}`
+	result := lv.applyHighlights(line)
+
+	// Should not crash; timestamp and JSON should both be handled
+	stripped := ansi.Strip(result)
+	if !strings.Contains(stripped, "ERROR") {
+		t.Fatal("ERROR should be present in output")
+	}
+	if !strings.Contains(stripped, "2024-01-01") {
+		t.Fatal("timestamp should be present in output")
+	}
+}
+
+func TestLogView_BuiltinHighlightsWithSearch(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	lv.AppendLine("2024-01-01T00:00:00Z ERROR something failed")
+	lv.AppendLine("2024-01-01T00:00:01Z INFO all good")
+
+	if err := lv.ApplySearch("failed", msgs.SearchModeSearch); err != nil {
+		t.Fatalf("ApplySearch: %v", err)
+	}
+	// Should find the match despite built-in highlights
+	if len(lv.matchPositions) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(lv.matchPositions))
+	}
+}
+
+func TestLogView_BuiltinHighlightsWithFilter(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	lv.AppendLine("ERROR: failure one")
+	lv.AppendLine("INFO: all good")
+	lv.AppendLine("ERROR: failure two")
+
+	if err := lv.ApplySearch("ERROR", msgs.SearchModeFilter); err != nil {
+		t.Fatalf("ApplySearch: %v", err)
+	}
+	// Filter should work correctly with built-in highlights
+	if !lv.FilterActive() {
+		t.Fatal("filter should be active")
+	}
+}
+
+func TestLogView_BuiltinEmptyLine(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+
+	result := lv.applyHighlights("")
+	if result != "" {
+		t.Fatal("empty line should remain empty")
+	}
+}
+
+func TestByteOffsetsToColumns_ASCII(t *testing.T) {
+	line := "hello world"
+	offsets := []int{0, 5, 6, 11}
+	cols := byteOffsetsToColumns(line, offsets)
+	want := []int{0, 5, 6, 11}
+	for i := range want {
+		if cols[i] != want[i] {
+			t.Fatalf("offset %d: got col %d, want %d", offsets[i], cols[i], want[i])
+		}
+	}
+}
+
+func TestByteOffsetsToColumns_MultiByte(t *testing.T) {
+	line := "café"
+	offsets := []int{0, 3, 5}
+	cols := byteOffsetsToColumns(line, offsets)
+	if cols[0] != 0 {
+		t.Fatalf("offset 0: got col %d, want 0", cols[0])
+	}
+	if cols[1] != 3 {
+		t.Fatalf("offset 3: got col %d, want 3", cols[1])
+	}
+	if cols[2] != 4 {
+		t.Fatalf("offset 5: got col %d, want 4", cols[2])
+	}
+}
+
+func TestByteOffsetsToColumns_Empty(t *testing.T) {
+	cols := byteOffsetsToColumns("hello", nil)
+	if len(cols) != 0 {
+		t.Fatal("expected empty result for nil offsets")
+	}
+	cols = byteOffsetsToColumns("hello", []int{})
+	if len(cols) != 0 {
+		t.Fatal("expected empty result for empty offsets")
+	}
+}
+
+func TestByteOffsetsToColumns_Unsorted(t *testing.T) {
+	line := "hello world"
+	offsets := []int{6, 0, 11, 5}
+	cols := byteOffsetsToColumns(line, offsets)
+	want := []int{6, 0, 11, 5}
+	for i := range want {
+		if cols[i] != want[i] {
+			t.Fatalf("offset %d: got col %d, want %d", offsets[i], cols[i], want[i])
+		}
+	}
+}
+
+func TestColorizeJSON_OutputPreserved(t *testing.T) {
+	inputs := []string{
+		`{"level":"info","msg":"hello"}`,
+		`{"a":{"b":1}}`,
+		`{"items":[1,2,3]}`,
+		`{"bool":true,"null":null,"num":42.5}`,
+		`[1,"two",true,null]`,
+	}
+	for _, input := range inputs {
+		result := colorizeJSON(input)
+		stripped := ansi.Strip(result)
+		if len(stripped) == 0 {
+			t.Fatalf("colorizeJSON(%q) produced empty output", input)
+		}
+		if result == stripped {
+			t.Fatalf("colorizeJSON(%q) produced no ANSI codes", input)
+		}
+	}
+}
+
+func BenchmarkApplyHighlights_PlainText(b *testing.B) {
+	lv := NewLogView(80, 24, 100)
+	line := "2024-03-22T14:30:00.123Z INFO processing request from 192.168.1.100:8080"
+	b.ResetTimer()
+	for range b.N {
+		_ = lv.applyHighlights(line)
+	}
+}
+
+func BenchmarkApplyHighlights_JSON(b *testing.B) {
+	lv := NewLogView(80, 24, 100)
+	line := `2024-03-22T14:30:00Z INFO {"level":"info","msg":"request processed","duration":0.042,"status":200,"ip":"10.0.0.1"}`
+	b.ResetTimer()
+	for range b.N {
+		_ = lv.applyHighlights(line)
+	}
+}
+
+func BenchmarkAppendLine_WithHighlights(b *testing.B) {
+	lines := []string{
+		"2024-03-22T14:30:00.123Z INFO processing request",
+		`{"level":"error","msg":"connection failed","host":"10.0.0.5:3306"}`,
+		"2024-03-22T14:30:01Z DEBUG cache hit ratio: 0.95",
+		"plain text log line with no special patterns",
+		"2024-03-22T14:30:02.456Z WARN high latency from 172.16.0.1:443",
+	}
+	b.ResetTimer()
+	for range b.N {
+		lv := NewLogView(80, 24, 1000)
+		for i := range 1000 {
+			lv.AppendLine(lines[i%len(lines)])
+		}
+	}
+}
+
+func BenchmarkAppendLine_WithoutHighlights(b *testing.B) {
+	lines := []string{
+		"2024-03-22T14:30:00.123Z INFO processing request",
+		`{"level":"error","msg":"connection failed","host":"10.0.0.5:3306"}`,
+		"2024-03-22T14:30:01Z DEBUG cache hit ratio: 0.95",
+		"plain text log line with no special patterns",
+		"2024-03-22T14:30:02.456Z WARN high latency from 172.16.0.1:443",
+	}
+	b.ResetTimer()
+	for range b.N {
+		lv := NewLogView(80, 24, 1000)
+		lv.ToggleSyntax() // disable highlighting
+		for i := range 1000 {
+			lv.AppendLine(lines[i%len(lines)])
+		}
+	}
+}
+
+func TestLogView_UpdateViewportWindowSize(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	for i := range 50 {
+		lv.AppendLine(fmt.Sprintf("line %d", i))
+	}
+	view := lv.viewport.View()
+	if !strings.Contains(view, "line 49") {
+		t.Fatal("expected last line visible with autoscroll")
+	}
+}
+
+func BenchmarkAppendLine_Windowed(b *testing.B) {
+	lines := []string{
+		"2024-03-22T14:30:00.123Z INFO processing request",
+		`{"level":"error","msg":"connection failed","host":"10.0.0.5:3306"}`,
+		"2024-03-22T14:30:01Z DEBUG cache hit ratio: 0.95",
+		"plain text log line with no special patterns",
+		"2024-03-22T14:30:02.456Z WARN high latency from 172.16.0.1:443",
+	}
+	b.ResetTimer()
+	for range b.N {
+		lv := NewLogView(80, 24, 10000)
+		for i := range 10000 {
+			lv.AppendLine(lines[i%len(lines)])
+		}
+	}
+}
+
+func TestLogView_ScrollOffset_Bounds(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	for i := range 50 {
+		lv.AppendLine(fmt.Sprintf("line %d", i))
+	}
+	lv.scrollOffset = -5
+	lv.clampScrollOffset()
+	if lv.scrollOffset != 0 {
+		t.Fatalf("expected scrollOffset 0, got %d", lv.scrollOffset)
+	}
+	lv.scrollOffset = 1000
+	lv.clampScrollOffset()
+	h := lv.viewportHeight()
+	maxOff := 50 - h
+	if lv.scrollOffset != maxOff {
+		t.Fatalf("expected scrollOffset %d, got %d", maxOff, lv.scrollOffset)
+	}
+}
+
+func TestLogView_InsertMarker(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	lv.AppendLine("line one")
+	lv.InsertMarker()
+	lv.AppendLine("line two")
+
+	if lv.buffer.Len() != 3 {
+		t.Fatalf("expected 3 lines, got %d", lv.buffer.Len())
+	}
+	raw := lv.buffer.RawGet(1)
+	if !strings.Contains(raw, "---") {
+		t.Fatalf("expected marker to contain '---', got: %s", raw)
+	}
+	// Should contain a time pattern HH:MM:SS
+	if !regexp.MustCompile(`\d{2}:\d{2}:\d{2}`).MatchString(raw) {
+		t.Fatalf("expected marker to contain timestamp, got: %s", raw)
+	}
+}
+
+func TestLogView_WrappedModeAllLinesReachViewport(t *testing.T) {
+	// Viewport is 40 chars wide, 10 rows tall
+	lv := NewLogView(42, 12, 100) // +2 for border
+	lv.viewport.SoftWrap = true
+
+	// Add 5 short lines and 3 long lines that will wrap
+	for i := 0; i < 5; i++ {
+		lv.AppendLine(fmt.Sprintf("short line %d", i))
+	}
+	for i := 0; i < 3; i++ {
+		lv.AppendLine(strings.Repeat("long ", 20)) // 100 chars, wraps to ~3 rows each
+	}
+
+	// All 8 logical lines should be in the viewport's content
+	if lv.viewport.TotalLineCount() < 8 {
+		t.Fatalf("expected at least 8 visual lines in viewport, got %d", lv.viewport.TotalLineCount())
+	}
+	// Viewport should be scrolled to bottom (autoscroll)
+	if !lv.viewport.AtBottom() {
+		t.Fatal("expected viewport to be at bottom with autoscroll")
+	}
+}
+
+func TestLogView_NonWrappedModeUnchanged(t *testing.T) {
+	lv := NewLogView(80, 12, 100)
+	// SoftWrap is off by default
+
+	for i := 0; i < 20; i++ {
+		lv.AppendLine(fmt.Sprintf("line %d", i))
+	}
+
+	// In non-wrapped mode, viewport should receive only viewportHeight lines
+	// (the O(H) window), not all 20
+	vpLines := lv.viewport.TotalLineCount()
+	h := lv.viewportHeight()
+	if vpLines > h+1 { // +1 for possible indicator
+		t.Fatalf("expected at most %d lines in viewport (non-wrapped), got %d", h+1, vpLines)
+	}
+}
+
+func TestLogView_InsertMarkerPassesFilter(t *testing.T) {
+	lv := NewLogView(80, 24, 100)
+	lv.AppendLine("ERROR: something broke")
+	lv.AppendLine("INFO: all good")
+
+	// Apply a filter for ERROR lines only
+	if err := lv.ApplySearch("ERROR", msgs.SearchModeFilter); err != nil {
+		t.Fatalf("ApplySearch: %v", err)
+	}
+	// Only 1 line should match the filter
+	if len(lv.filteredIndices) != 1 {
+		t.Fatalf("expected 1 filtered line, got %d", len(lv.filteredIndices))
+	}
+
+	// Insert a marker — it should pass the filter even though it doesn't match "ERROR"
+	lv.InsertMarker()
+	if len(lv.filteredIndices) != 2 {
+		t.Fatalf("expected 2 filtered lines (1 match + 1 marker), got %d", len(lv.filteredIndices))
+	}
+}
+
+func TestLogView_WrappedScrollDown(t *testing.T) {
+	lv := NewLogView(42, 12, 100)
+	lv.viewport.SoftWrap = true
+
+	// Add enough lines to need scrolling
+	for i := 0; i < 30; i++ {
+		lv.AppendLine(fmt.Sprintf("line %d", i))
+	}
+
+	// Autoscroll should have us at bottom
+	if !lv.viewport.AtBottom() {
+		t.Fatal("expected at bottom with autoscroll")
+	}
+
+	// Scroll up, then check we're no longer at bottom
+	lv.ScrollUp()
+	if lv.viewport.AtBottom() {
+		t.Fatal("expected not at bottom after ScrollUp")
+	}
+	if lv.autoscroll {
+		t.Fatal("expected autoscroll off after ScrollUp")
+	}
+
+	// GotoBottom should restore autoscroll
+	lv.GotoBottom()
+	if !lv.viewport.AtBottom() {
+		t.Fatal("expected at bottom after GotoBottom")
+	}
+	if !lv.autoscroll {
+		t.Fatal("expected autoscroll on after GotoBottom")
 	}
 }

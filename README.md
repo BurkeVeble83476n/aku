@@ -141,14 +141,6 @@ syntax:
   key: "#60A5FA"
   string: "#34D399"
   number: "#F472B6"
-
-# Log line highlighting rules
-highlights:
-  - pattern: "ERROR|FATAL"
-    fg: "#EF4444"
-    bold: true
-  - pattern: "WARN"
-    fg: "#F59E0B"
 ```
 
 ## Key Bindings
