@@ -429,6 +429,10 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 		if !ok {
 			return a, nil
 		}
+		if a.k8sClient == nil {
+			a.statusBar.SetError("exec: no k8s client")
+			return a, nil
+		}
 		ns := selected.GetNamespace()
 		if ns == "" {
 			ns = focused.Namespace()
@@ -438,7 +442,7 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 		if focused.Plugin().Name() == "containers" {
 			containerName = selected.GetName()
 		}
-		return a, k8s.ExecCmd(podName, containerName, ns)
+		return a, k8s.ExecCmd(a.k8sClient, podName, containerName, ns, a.config.ExecCommand())
 
 	case command == "debug" || command == "debug-privileged":
 		return a.handleDebug(command == "debug-privileged")
@@ -1058,6 +1062,7 @@ func (a App) executeSingleDelete(obj *unstructured.Unstructured, force bool) (te
 	if focused.Plugin().Name() == "portforwards" && a.pfRegistry != nil {
 		id := obj.GetName()
 		a.pfRegistry.Remove(id)
+		delete(a.pfHandles, id)
 		a = a.syncIndicators()
 		if sp, ok := focused.Plugin().(plugin.SelfPopulating); ok {
 			focused.SetObjects(sp.Objects())
@@ -1131,6 +1136,7 @@ func (a App) executeBulkDelete(targets []*unstructured.Unstructured, force bool)
 	if p.Name() == "portforwards" && a.pfRegistry != nil {
 		for _, obj := range targets {
 			a.pfRegistry.Remove(obj.GetName())
+			delete(a.pfHandles, obj.GetName())
 		}
 		a = a.syncIndicators()
 		if sp, ok := p.(plugin.SelfPopulating); ok {
@@ -1392,16 +1398,14 @@ func appendImageChanges(result []msgs.ContainerImageChange, obj *unstructured.Un
 }
 
 func (a App) handlePortForwardRequested(msg msgs.PortForwardRequestedMsg) (tea.Model, tea.Cmd) {
-	if a.pfRegistry == nil {
+	if a.pfRegistry == nil || a.k8sClient == nil {
 		return a, nil
 	}
 	return a, func() tea.Msg {
-		// Fast-path: skip expensive subprocess spawn if port is already registered.
-		// AddIfNotPresent below is the atomic guard against concurrent requests.
 		if a.pfRegistry.HasLocalPort(msg.LocalPort) {
 			return msgs.PortForwardStartedMsg{Err: fmt.Errorf("local port %d already in use by another port-forward", msg.LocalPort)}
 		}
-		cancel, err := k8s.PortForward(context.Background(), msg.PodName, msg.PodNamespace, msg.LocalPort, msg.RemotePort)
+		apf, err := k8s.PortForward(a.k8sClient, msg.PodName, msg.PodNamespace, msg.LocalPort, msg.RemotePort)
 		if err != nil {
 			return msgs.PortForwardStartedMsg{Err: err}
 		}
@@ -1412,14 +1416,46 @@ func (a App) handlePortForwardRequested(msg msgs.PortForwardRequestedMsg) (tea.M
 			LocalPort:     msg.LocalPort,
 			RemotePort:    msg.RemotePort,
 			Protocol:      msg.Protocol,
-			Status:        "Active",
-			Cancel:        cancel,
+			Status:        portforward.StatusStarting,
+			Cancel:        apf.Stop,
 		})
 		if err != nil {
-			cancel() // Clean up the port-forward we just started
+			apf.Stop()
 			return msgs.PortForwardStartedMsg{Err: err}
 		}
-		return msgs.PortForwardStartedMsg{ID: id, LocalPort: msg.LocalPort}
+		return msgs.PortForwardStartedMsg{ID: id, LocalPort: msg.LocalPort, Handle: apf}
+	}
+}
+
+func watchPortForwardReady(id string, apf *k8s.ActivePortForward) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-apf.Ready:
+			return msgs.PortForwardStatusMsg{ID: id, Status: portforward.StatusReady}
+		case <-apf.Done:
+			select {
+			case err := <-apf.ErrCh:
+				if err != nil {
+					return msgs.PortForwardStatusMsg{ID: id, Status: portforward.StatusError, Err: err}
+				}
+			default:
+			}
+			return msgs.PortForwardStatusMsg{ID: id, Status: portforward.StatusStopped}
+		}
+	}
+}
+
+func watchPortForwardDone(id string, apf *k8s.ActivePortForward) tea.Cmd {
+	return func() tea.Msg {
+		<-apf.Done
+		select {
+		case err := <-apf.ErrCh:
+			if err != nil {
+				return msgs.PortForwardStatusMsg{ID: id, Status: portforward.StatusError, Err: err}
+			}
+		default:
+		}
+		return msgs.PortForwardStatusMsg{ID: id, Status: portforward.StatusStopped}
 	}
 }
 

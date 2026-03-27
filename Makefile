@@ -7,10 +7,13 @@ LDFLAGS := -s -w \
 	-X github.com/aohoyd/aku/pkg/build.Commit=$(COMMIT) \
 	-X github.com/aohoyd/aku/pkg/build.Date=$(DATE)
 
-.PHONY: build test release
+.PHONY: build install test release
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o aku .
+
+install:
+	go install -ldflags "$(LDFLAGS)" .
 
 test:
 	go test ./...

@@ -74,6 +74,37 @@ func TestRegistryHasLocalPort(t *testing.T) {
 	}
 }
 
+func TestRegistryUpdateStatus(t *testing.T) {
+	r := NewRegistry()
+	id := r.Add(Entry{
+		PodName:    "nginx",
+		LocalPort:  8080,
+		RemotePort: 80,
+		Status:     StatusStarting,
+	})
+
+	ok := r.UpdateStatus(id, StatusReady)
+	if !ok {
+		t.Fatal("expected UpdateStatus to return true for existing entry")
+	}
+
+	entries := r.List()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Status != StatusReady {
+		t.Errorf("expected status %q, got %q", StatusReady, entries[0].Status)
+	}
+}
+
+func TestRegistryUpdateStatusNotFound(t *testing.T) {
+	r := NewRegistry()
+	ok := r.UpdateStatus("pf-nonexistent", StatusError)
+	if ok {
+		t.Fatal("expected UpdateStatus to return false for non-existent entry")
+	}
+}
+
 func TestRegistryAddIfNotPresent(t *testing.T) {
 	r := NewRegistry()
 	id, err := r.AddIfNotPresent(Entry{LocalPort: 8080, Status: "Active"})

@@ -57,6 +57,29 @@ func TestDebugCommand(t *testing.T) {
 	}
 }
 
+func TestExecCommandDefault(t *testing.T) {
+	c := &Config{}
+	cmd := c.ExecCommand()
+	expected := []string{"sh", "-c", "clear; (bash || ash || sh)"}
+	if len(cmd) != len(expected) {
+		t.Fatalf("default exec command length mismatch: got %v, want %v", cmd, expected)
+	}
+	for i := range expected {
+		if cmd[i] != expected[i] {
+			t.Fatalf("default exec command[%d] = %q, want %q", i, cmd[i], expected[i])
+		}
+	}
+}
+
+func TestExecCommandCustom(t *testing.T) {
+	c := &Config{}
+	c.Exec.Command = []string{"/bin/bash", "-l"}
+	cmd := c.ExecCommand()
+	if len(cmd) != 2 || cmd[0] != "/bin/bash" || cmd[1] != "-l" {
+		t.Fatalf("custom exec command not returned: got %v", cmd)
+	}
+}
+
 func TestLoadConfigWithCharts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

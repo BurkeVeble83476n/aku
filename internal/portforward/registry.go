@@ -7,6 +7,14 @@ import (
 	"sync/atomic"
 )
 
+// Status constants for port-forward entries.
+const (
+	StatusStarting = "Starting"
+	StatusReady    = "Ready"
+	StatusError    = "Error"
+	StatusStopped  = "Stopped"
+)
+
 // Entry represents an active port-forward.
 type Entry struct {
 	ID            string
@@ -59,12 +67,13 @@ func (r *Registry) AddIfNotPresent(e Entry) (string, error) {
 // Remove stops and removes an entry by ID.
 func (r *Registry) Remove(id string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if e, ok := r.entries[id]; ok {
-		if e.Cancel != nil {
-			e.Cancel()
-		}
+	e, ok := r.entries[id]
+	if ok {
 		delete(r.entries, id)
+	}
+	r.mu.Unlock()
+	if ok && e.Cancel != nil {
+		e.Cancel()
 	}
 }
 
@@ -98,14 +107,30 @@ func (r *Registry) HasLocalPort(port int) bool {
 	return false
 }
 
+// UpdateStatus sets the status of an entry by ID.
+// Returns true if the entry was found and updated.
+func (r *Registry) UpdateStatus(id, status string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[id]; ok {
+		e.Status = status
+		return true
+	}
+	return false
+}
+
 // StopAll cancels and removes all entries.
 func (r *Registry) StopAll() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	cancels := make([]context.CancelFunc, 0, len(r.entries))
 	for _, e := range r.entries {
 		if e.Cancel != nil {
-			e.Cancel()
+			cancels = append(cancels, e.Cancel)
 		}
 	}
 	r.entries = make(map[string]*Entry)
+	r.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 }

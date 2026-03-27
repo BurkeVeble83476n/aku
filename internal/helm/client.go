@@ -3,7 +3,6 @@ package helm
 import (
 	"cmp"
 	"fmt"
-	"log"
 	"slices"
 	"time"
 
@@ -85,7 +84,7 @@ func (c *liveClient) newActionConfig(namespace string) (*action.Configuration, e
 		},
 	}
 	cfg := new(action.Configuration)
-	if err := cfg.Init(flags, namespace, "", log.Printf); err != nil {
+	if err := cfg.Init(flags, namespace, "", func(string, ...any) {}); err != nil {
 		return nil, fmt.Errorf("helm config: %w", err)
 	}
 	return cfg, nil

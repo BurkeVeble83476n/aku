@@ -41,7 +41,7 @@ func DefaultBindings() []Binding {
 		// ── Global, hidden from statusbar (default) ──
 		{Key: ":", Help: "resource picker", Command: "resource-picker"},
 		{Key: "esc", Help: "close/clear", Command: "clear-overlay"},
-		{Key: "ctrl+w", Help: "close panel", Command: "close-current-panel"},
+		{Key: "ctrl+w", Help: "close panel", Command: "close-current-panel", Visible: true},
 		{Key: "ctrl+r", Help: "reload", Command: "reload-all"},
 		{Key: "j", Help: "down", Command: "cursor-down"},
 		{Key: "k", Help: "up", Command: "cursor-up"},

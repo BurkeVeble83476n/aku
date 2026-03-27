@@ -13,6 +13,11 @@ type DebugConfig struct {
 	Command []string `yaml:"command,omitempty"`
 }
 
+// ExecConfig holds configuration for exec into containers.
+type ExecConfig struct {
+	Command []string `yaml:"command,omitempty"`
+}
+
 // LogsConfig holds configuration for log viewing.
 type LogsConfig struct {
 	BufferSize       int    `yaml:"buffer_size,omitempty"`
@@ -23,6 +28,7 @@ type LogsConfig struct {
 type Config struct {
 	Charts map[string]map[string]string `yaml:"charts,omitempty"`
 	Debug  DebugConfig                  `yaml:"debug,omitempty"`
+	Exec   ExecConfig                   `yaml:"exec,omitempty"`
 	Logs   LogsConfig                   `yaml:"logs,omitempty"`
 }
 
@@ -80,6 +86,14 @@ func (c *Config) DebugCommand() []string {
 		return c.Debug.Command
 	}
 	return []string{"sh"}
+}
+
+// ExecCommand returns the configured exec command, defaulting to ["sh", "-c", "clear; (bash || ash || sh)"].
+func (c *Config) ExecCommand() []string {
+	if len(c.Exec.Command) > 0 {
+		return c.Exec.Command
+	}
+	return []string{"sh", "-c", "clear; (bash || ash || sh)"}
 }
 
 // LogDefaultTimeRange returns the configured default time range label, defaulting to "15m".

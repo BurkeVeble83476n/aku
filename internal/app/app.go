@@ -80,6 +80,7 @@ type App struct {
 
 	// Port-forward
 	pfRegistry *portforward.Registry
+	pfHandles  map[string]*k8s.ActivePortForward
 	config     *config.Config
 	pendingRun        *config.RunConfig             // external command waiting for confirm
 	pendingBulkDelete []*unstructured.Unstructured // bulk delete targets waiting for confirm
@@ -120,6 +121,7 @@ func New(client *k8s.Client, store *k8s.Store, keymap *config.Keymap, cfg *confi
 		helpOverlay:        ui.NewHelpOverlay(80, 24),
 		helmClient:         helmClient,
 		pfRegistry:         pfRegistry,
+		pfHandles:          make(map[string]*k8s.ActivePortForward),
 		portForwardOverlay: ui.NewPortForwardOverlay(40, 20),
 		setImageOverlay:    ui.NewSetImageOverlay(40, 20),
 		helmRollbackOverlay: ui.NewHelmRollbackOverlay(40, 20),
@@ -460,23 +462,48 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case msgs.PortForwardStartedMsg:
 		if msg.Err != nil {
 			a.statusBar.SetError("port-forward failed: " + msg.Err.Error())
-		} else {
-			a.statusBar.SetError(fmt.Sprintf("port-forward active: localhost:%d", msg.LocalPort))
+			return a, nil
 		}
+		a.statusBar.SetError(fmt.Sprintf("port-forward starting: localhost:%d", msg.LocalPort))
 		a = a.syncIndicators()
-		// Refresh portforwards view if visible
-		for i := range a.layout.SplitCount() {
-			split := a.layout.SplitAt(i)
-			if split != nil && split.Plugin().Name() == "portforwards" {
-				if sp, ok := split.Plugin().(plugin.SelfPopulating); ok {
-					split.SetObjects(sp.Objects())
-				}
-			}
+		a = a.refreshPortforwardSplits()
+		// Store the handle in the main Update loop (single-threaded) to avoid data race.
+		if apf, ok := msg.Handle.(*k8s.ActivePortForward); ok && apf != nil {
+			a.pfHandles[msg.ID] = apf
+			return a, watchPortForwardReady(msg.ID, apf)
 		}
 		return a, nil
 
 	case msgs.PortForwardStoppedMsg:
 		a = a.syncIndicators()
+		return a, nil
+
+	case msgs.PortForwardStatusMsg:
+		a.pfRegistry.UpdateStatus(msg.ID, msg.Status)
+		switch msg.Status {
+		case portforward.StatusReady:
+			a.statusBar.SetError(fmt.Sprintf("port-forward ready: localhost:%d", a.localPortForPF(msg.ID)))
+			var cmd tea.Cmd
+			if apf, ok := a.pfHandles[msg.ID]; ok {
+				cmd = watchPortForwardDone(msg.ID, apf)
+			}
+			a = a.syncIndicators()
+			a = a.refreshPortforwardSplits()
+			return a, cmd
+		case portforward.StatusError:
+			errMsg := "port-forward error"
+			if msg.Err != nil {
+				errMsg = "port-forward error: " + msg.Err.Error()
+			}
+			a.statusBar.SetError(errMsg)
+			a.pfRegistry.Remove(msg.ID)
+			delete(a.pfHandles, msg.ID)
+		case portforward.StatusStopped:
+			a.pfRegistry.Remove(msg.ID)
+			delete(a.pfHandles, msg.ID)
+		}
+		a = a.syncIndicators()
+		a = a.refreshPortforwardSplits()
 		return a, nil
 
 	case msgs.WarningMsg:
@@ -837,6 +864,27 @@ func (a App) syncIndicators() App {
 	}
 	a.statusBar.SetIndicator(indicator)
 	return a
+}
+
+func (a App) refreshPortforwardSplits() App {
+	for i := range a.layout.SplitCount() {
+		split := a.layout.SplitAt(i)
+		if split != nil && split.Plugin().Name() == "portforwards" {
+			if sp, ok := split.Plugin().(plugin.SelfPopulating); ok {
+				split.SetObjects(sp.Objects())
+			}
+		}
+	}
+	return a
+}
+
+func (a App) localPortForPF(id string) int {
+	for _, e := range a.pfRegistry.List() {
+		if e.ID == id {
+			return e.LocalPort
+		}
+	}
+	return 0
 }
 
 func (a App) handleAPIResourcesDiscovered(msg k8s.APIResourcesDiscoveredMsg) (tea.Model, tea.Cmd) {

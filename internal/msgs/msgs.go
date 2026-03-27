@@ -102,11 +102,19 @@ type PortForwardStartedMsg struct {
 	ID        string
 	LocalPort int
 	Err       error
+	Handle    any // *k8s.ActivePortForward — stored as any to avoid circular import
 }
 
 // PortForwardStoppedMsg is emitted when a port-forward is stopped.
 type PortForwardStoppedMsg struct {
 	ID string
+}
+
+// PortForwardStatusMsg carries a status update for a port-forward entry.
+type PortForwardStatusMsg struct {
+	ID     string
+	Status string
+	Err    error
 }
 
 // ContainerImageChange represents a container image to change.
