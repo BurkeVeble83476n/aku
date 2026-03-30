@@ -45,10 +45,7 @@ func (v *logViewport) View() string {
 	// Pre-compute the empty-line padding string once.
 	emptyLine := strings.Repeat(" ", v.width)
 
-	n := len(v.lines)
-	if n > v.height {
-		n = v.height
-	}
+	n := min(len(v.lines), v.height)
 
 	outputs := make([]string, v.height)
 
@@ -67,25 +64,16 @@ func (v *logViewport) View() string {
 				visibleWidth = 0
 			} else {
 				line = ansi.Cut(line, v.xOffset, v.xOffset+v.width)
-				visibleWidth = rw - v.xOffset
-				if visibleWidth > v.width {
-					visibleWidth = v.width
-				}
+				visibleWidth = min(rw-v.xOffset, v.width)
 			}
 		} else {
 			if rw > v.width {
 				line = ansi.Cut(line, 0, v.width)
 			}
-			visibleWidth = rw
-			if visibleWidth > v.width {
-				visibleWidth = v.width
-			}
+			visibleWidth = min(rw, v.width)
 		}
 
-		padding := v.width - visibleWidth
-		if padding < 0 {
-			padding = 0
-		}
+		padding := max(v.width-visibleWidth, 0)
 		if padding > 0 {
 			outputs[i] = line + emptyLine[:padding]
 		} else {

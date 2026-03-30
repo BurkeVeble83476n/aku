@@ -124,11 +124,10 @@ func TestHighlightMatchesColorANSICell(t *testing.T) {
 	}
 	// After highlight-off, the original green color must be re-emitted
 	// so "ning" keeps its color.
-	offIdx := strings.Index(result, highlightMatchOff)
-	if offIdx < 0 {
+	_, after, found := strings.Cut(result, highlightMatchOff)
+	if !found {
 		t.Fatal("result should contain highlight off code")
 	}
-	after := result[offIdx+len(highlightMatchOff):]
 	if !strings.HasPrefix(after, "\x1b[38;2;80;250;123m") {
 		t.Fatalf("color should be restored after highlight-off, got %q", after)
 	}

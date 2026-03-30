@@ -244,21 +244,12 @@ func parseResourceSpecs(rawSpecs []string) ([]app.ResourceSpec, error) {
 
 	var specs []app.ResourceSpec
 	for _, raw := range rawSpecs {
-		var ns, name string
-
 		// Detect qualified names (e.g. "certificates.cert-manager.io/v1"):
 		// if the part before the first "/" contains a ".", it's a qualified name.
 		// Otherwise "namespace/resource" is a namespaced bare name.
-		if idx := strings.IndexByte(raw, '/'); idx >= 0 {
-			left := raw[:idx]
-			if strings.ContainsRune(left, '.') {
-				// Qualified name — use the whole string.
-				name = raw
-			} else {
-				ns = left
-				name = raw[idx+1:]
-			}
-		} else {
+		ns, name, found := strings.Cut(raw, "/")
+		if !found || strings.ContainsRune(ns, '.') {
+			ns = ""
 			name = raw
 		}
 

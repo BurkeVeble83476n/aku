@@ -742,7 +742,7 @@ func TestLogView_WrapTotalWrappedRows100Lines(t *testing.T) {
 
 	// Append 100 lines: mix of short and long lines
 	expectedTotal := 0
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		var line string
 		if i%3 == 0 {
 			// Long line that wraps: 100 chars ~ 3 rows at width 40
@@ -776,7 +776,7 @@ func TestLogView_WrapTotalWrappedRowsAfterEviction(t *testing.T) {
 	vpWidth := lv.logVP.width // 40
 
 	// Append 50 lines to force evictions (buffer wraps around multiple times)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		var line string
 		if i%4 == 0 {
 			line = strings.Repeat("y", 80) // wraps to 2 rows at width 40
@@ -883,10 +883,10 @@ func TestLogView_WrappedModeAllLinesReachViewport(t *testing.T) {
 	lv.softWrap = true
 
 	// Add 5 short lines and 3 long lines that will wrap
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		lv.AppendLine(fmt.Sprintf("short line %d", i))
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		lv.AppendLine(strings.Repeat("long ", 20)) // 100 chars, wraps to ~3 rows each
 	}
 
@@ -896,10 +896,7 @@ func TestLogView_WrappedModeAllLinesReachViewport(t *testing.T) {
 	}
 	// Should be scrolled to bottom (autoscroll)
 	vpHeight := lv.viewportHeight()
-	maxOff := lv.totalWrappedRows - vpHeight
-	if maxOff < 0 {
-		maxOff = 0
-	}
+	maxOff := max(lv.totalWrappedRows-vpHeight, 0)
 	if lv.wrapYOffset != maxOff {
 		t.Fatalf("expected wrapYOffset at bottom (%d), got %d", maxOff, lv.wrapYOffset)
 	}
@@ -909,7 +906,7 @@ func TestLogView_NonWrappedModeUnchanged(t *testing.T) {
 	lv := NewLogView(80, 12, 100, "15m", 900)
 	// SoftWrap is off by default
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		lv.AppendLine(fmt.Sprintf("line %d", i))
 	}
 
@@ -996,16 +993,13 @@ func TestLogView_WrappedScrollDown(t *testing.T) {
 	lv.softWrap = true
 
 	// Add enough lines to need scrolling
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		lv.AppendLine(fmt.Sprintf("line %d", i))
 	}
 
 	// Autoscroll should have us at bottom
 	vpHeight := lv.viewportHeight()
-	maxOff := lv.totalWrappedRows - vpHeight
-	if maxOff < 0 {
-		maxOff = 0
-	}
+	maxOff := max(lv.totalWrappedRows-vpHeight, 0)
 	atBottom := lv.wrapYOffset >= maxOff
 	if !atBottom {
 		t.Fatal("expected at bottom with autoscroll")
@@ -1023,10 +1017,7 @@ func TestLogView_WrappedScrollDown(t *testing.T) {
 
 	// GotoBottom should restore autoscroll
 	lv.GotoBottom()
-	maxOff = lv.totalWrappedRows - vpHeight
-	if maxOff < 0 {
-		maxOff = 0
-	}
+	maxOff = max(lv.totalWrappedRows-vpHeight, 0)
 	atBottom = lv.wrapYOffset >= maxOff
 	if !atBottom {
 		t.Fatal("expected at bottom after GotoBottom")
@@ -1079,7 +1070,7 @@ func TestLogView_WrapModeSearchHighlightsOnlyVisibleLines(t *testing.T) {
 	lv.ToggleSyntax()
 
 	// Add 20 lines. Every 3rd line contains "needle".
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		if i%3 == 0 {
 			lv.AppendLine(fmt.Sprintf("line %02d needle here", i))
 		} else {
@@ -1303,7 +1294,7 @@ func TestLogView_FilterEvictionOffsetBased(t *testing.T) {
 
 	// Append 100 lines: every 3rd line matches the filter.
 	// This triggers 80 evictions (100 - 20 = 80).
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i%3 == 0 {
 			lv.AppendLine(fmt.Sprintf("match line %d", i))
 		} else {

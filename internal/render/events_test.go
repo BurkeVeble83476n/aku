@@ -103,7 +103,7 @@ func TestRenderEventsAlignment(t *testing.T) {
 
 	// Every row (header, separator, data) must have Message starting at the same column.
 	var positions []int
-	for _, line := range strings.Split(content.Raw, "\n") {
+	for line := range strings.SplitSeq(content.Raw, "\n") {
 		if idx := strings.Index(line, "Message"); idx != -1 {
 			positions = append(positions, idx)
 		}

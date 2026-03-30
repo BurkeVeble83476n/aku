@@ -126,7 +126,7 @@ func TestTimeRangePickerSelectAllPreset(t *testing.T) {
 	tp.OpenPresets()
 
 	// Navigate to the last item ("all", index 9)
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		tp, _ = tp.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	tp, cmd := tp.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

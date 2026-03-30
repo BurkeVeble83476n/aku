@@ -94,7 +94,7 @@ func TestCheckHealthUnreachableNoLeak(t *testing.T) {
 	goroutinesBefore := runtime.NumGoroutine()
 
 	// Call CheckHealth several times against the unreachable server.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		result := CheckHealth(context.Background(), c)
 		if result {
 			t.Fatal("expected CheckHealth to return false for unreachable server")

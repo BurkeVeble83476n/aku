@@ -410,10 +410,7 @@ func (o Overlay) computeInnerWidth() int {
 	chrome := overlayChrome()
 
 	// Auto-measure: find widest content
-	maxW := max(lipgloss.Width(o.footer), lipgloss.Width(o.title))
-	if lipgloss.Width(o.content) > maxW {
-		maxW = lipgloss.Width(o.content)
-	}
+	maxW := max(lipgloss.Width(o.content), max(lipgloss.Width(o.footer), lipgloss.Width(o.title)))
 	for _, item := range o.items {
 		w := lipgloss.Width(item) + 4 // account for cursor prefix and padding
 		if w > maxW {
@@ -431,10 +428,7 @@ func (o Overlay) computeInnerWidth() int {
 	maxW += chrome
 
 	// Clamp
-	upper := max(o.width, 26)
-	if upper > 80 {
-		upper = 80
-	}
+	upper := min(max(o.width, 26), 80)
 	if maxW < 26 {
 		maxW = 26
 	}

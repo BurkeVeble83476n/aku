@@ -81,14 +81,11 @@ func ByQualifiedName(qualified string) (ResourcePlugin, bool) {
 	version := qualified[slashIdx+1:]
 	left := qualified[:slashIdx]
 
-	dotIdx := strings.Index(left, ".")
-	if dotIdx < 0 {
+	name, group, found := strings.Cut(left, ".")
+	if !found {
 		// Has "/" but no "." in the left part — not a valid qualified name.
 		return ByName(qualified)
 	}
-
-	name := left[:dotIdx]
-	group := left[dotIdx+1:]
 
 	gvr := schema.GroupVersionResource{Group: group, Version: version, Resource: name}
 	return ByGVR(gvr)

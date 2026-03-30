@@ -107,10 +107,7 @@ func (lv *LogView) totalDisplayLines() int {
 func (lv *LogView) clampScrollOffset() {
 	total := lv.totalDisplayLines()
 	h := lv.viewportHeight()
-	maxOffset := total - h
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
+	maxOffset := max(total-h, 0)
 	if lv.scrollOffset > maxOffset {
 		lv.scrollOffset = maxOffset
 	}
@@ -141,10 +138,7 @@ func (lv *LogView) updateViewport() {
 	if hasIndicator {
 		indicatorOffset = 1
 	}
-	start := lv.scrollOffset - indicatorOffset
-	if start < 0 {
-		start = 0
-	}
+	start := max(lv.scrollOffset-indicatorOffset, 0)
 	end := start + h
 	if hasIndicator && lv.scrollOffset == 0 {
 		end--
@@ -269,10 +263,7 @@ func (lv *LogView) updateViewportWrapped() {
 	}
 
 	// Clamp wrapYOffset
-	maxOffset := lv.totalWrappedRows - vpHeight
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
+	maxOffset := max(lv.totalWrappedRows-vpHeight, 0)
 	if lv.wrapYOffset > maxOffset {
 		lv.wrapYOffset = maxOffset
 	}
@@ -389,10 +380,7 @@ func (lv *LogView) updateViewportWrapped() {
 		} else {
 			offset := 0
 			for offset < w {
-				end := offset + vpWidth
-				if end > w {
-					end = w
-				}
+				end := min(offset+vpWidth, w)
 				segment := ansi.Cut(line, offset, end)
 				segWidth := end - offset
 				visRows = append(visRows, segment)
@@ -779,10 +767,7 @@ func (lv *LogView) ToggleAutoscroll() {
 	lv.autoscroll = !lv.autoscroll
 	if lv.autoscroll {
 		if lv.softWrap {
-			maxOff := lv.totalWrappedRows - lv.viewportHeight()
-			if maxOff < 0 {
-				maxOff = 0
-			}
+			maxOff := max(lv.totalWrappedRows-lv.viewportHeight(), 0)
 			lv.wrapYOffset = maxOff
 			lv.updateViewportWrapped()
 		} else {
@@ -860,10 +845,7 @@ func (lv *LogView) ScrollDown() {
 	if lv.softWrap {
 		lv.wrapYOffset++
 		lv.updateViewportWrapped() // this will clamp
-		maxOff := lv.totalWrappedRows - lv.viewportHeight()
-		if maxOff < 0 {
-			maxOff = 0
-		}
+		maxOff := max(lv.totalWrappedRows-lv.viewportHeight(), 0)
 		if lv.wrapYOffset >= maxOff {
 			lv.autoscroll = true
 		}
@@ -913,10 +895,7 @@ func (lv *LogView) PageDown() {
 	if lv.softWrap {
 		lv.wrapYOffset += lv.viewportHeight()
 		lv.updateViewportWrapped() // this will clamp
-		maxOff := lv.totalWrappedRows - lv.viewportHeight()
-		if maxOff < 0 {
-			maxOff = 0
-		}
+		maxOff := max(lv.totalWrappedRows-lv.viewportHeight(), 0)
 		if lv.wrapYOffset >= maxOff {
 			lv.autoscroll = true
 		}
@@ -947,10 +926,7 @@ func (lv *LogView) GotoTop() {
 // GotoBottom scrolls to the bottom of the content.
 func (lv *LogView) GotoBottom() {
 	if lv.softWrap {
-		maxOff := lv.totalWrappedRows - lv.viewportHeight()
-		if maxOff < 0 {
-			maxOff = 0
-		}
+		maxOff := max(lv.totalWrappedRows-lv.viewportHeight(), 0)
 		lv.wrapYOffset = maxOff
 		lv.autoscroll = true
 		lv.updateViewportWrapped()
