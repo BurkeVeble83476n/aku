@@ -29,11 +29,17 @@ func TestPluginMetadata(t *testing.T) {
 func TestPluginColumns(t *testing.T) {
 	p := New(nil, nil)
 	cols := p.Columns()
-	if len(cols) != 5 {
-		t.Fatalf("expected 5 columns, got %d", len(cols))
+	if len(cols) != 6 {
+		t.Fatalf("expected 6 columns, got %d", len(cols))
 	}
 	if cols[0].Title != "NAME" {
 		t.Fatalf("expected first column 'NAME', got '%s'", cols[0].Title)
+	}
+	if cols[4].Title != "IP" {
+		t.Fatalf("expected column 4 'IP', got '%s'", cols[4].Title)
+	}
+	if cols[5].Title != "AGE" {
+		t.Fatalf("expected column 5 'AGE', got '%s'", cols[5].Title)
 	}
 }
 
@@ -48,6 +54,7 @@ func TestPluginRow(t *testing.T) {
 			},
 			"status": map[string]any{
 				"phase": "Running",
+				"podIP": "10.0.0.5",
 				"containerStatuses": []any{
 					map[string]any{
 						"ready":        true,
@@ -74,6 +81,9 @@ func TestPluginRow(t *testing.T) {
 	}
 	if row[3] != "0" {
 		t.Fatalf("expected restarts '0', got '%s'", row[3])
+	}
+	if row[4] != "10.0.0.5" {
+		t.Fatalf("expected IP '10.0.0.5', got '%s'", row[4])
 	}
 }
 
@@ -158,6 +168,46 @@ func TestPluginSortValueFallback(t *testing.T) {
 	}
 	if v := p.SortValue(obj, "UNKNOWN"); v != "" {
 		t.Fatalf("expected empty for unknown column, got %q", v)
+	}
+}
+
+func TestPluginRowMissingPodIP(t *testing.T) {
+	p := New(nil, nil)
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"metadata": map[string]any{
+				"name":              "no-ip-pod",
+				"namespace":         "default",
+				"creationTimestamp": "2026-02-24T10:00:00Z",
+			},
+			"status": map[string]any{
+				"phase": "Pending",
+			},
+			"spec": map[string]any{
+				"containers": []any{
+					map[string]any{"name": "main"},
+				},
+			},
+		},
+	}
+	row := p.Row(obj)
+	if row[4] != "<none>" {
+		t.Fatalf("expected IP '<none>', got '%s'", row[4])
+	}
+}
+
+func TestPluginSortValueIP(t *testing.T) {
+	p := New(nil, nil).(*Plugin)
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"status": map[string]any{
+				"podIP": "10.0.0.5",
+			},
+		},
+	}
+	v := p.SortValue(obj, "IP")
+	if v != "10.0.0.5" {
+		t.Fatalf("expected '10.0.0.5', got %q", v)
 	}
 }
 

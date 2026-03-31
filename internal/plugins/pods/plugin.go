@@ -44,6 +44,7 @@ func (p *Plugin) Columns() []plugin.Column {
 		{Title: "READY", Width: 8},
 		{Title: "STATUS", Width: 16},
 		{Title: "RESTARTS", Width: 10},
+		{Title: "IP", Width: 16},
 		{Title: "AGE", Width: 8},
 	}
 }
@@ -55,8 +56,12 @@ func (p *Plugin) Row(obj *unstructured.Unstructured) []string {
 	status := renderStatus(phase, phase == "Running" && ready < total)
 	readyStr := fmt.Sprintf("%d/%d", ready, total)
 	restarts := extractRestarts(obj)
+	podIP, _, _ := unstructured.NestedString(obj.Object, "status", "podIP")
+	if podIP == "" {
+		podIP = "<none>"
+	}
 	age := render.FormatAge(obj)
-	return []string{name, readyStr, status, restarts, age}
+	return []string{name, readyStr, status, restarts, podIP, age}
 }
 
 func (p *Plugin) YAML(obj *unstructured.Unstructured) (render.Content, error) {
@@ -301,8 +306,12 @@ func formatToleration(tol corev1.Toleration) string {
 // SortValue implements plugin.Sortable.
 // Returns a custom sort key only for STATUS; built-in handles NAME and AGE.
 func (p *Plugin) SortValue(obj *unstructured.Unstructured, column string) string {
-	if column == "STATUS" {
+	switch column {
+	case "STATUS":
 		return extractPodPhase(obj)
+	case "IP":
+		ip, _, _ := unstructured.NestedString(obj.Object, "status", "podIP")
+		return ip
 	}
 	return ""
 }

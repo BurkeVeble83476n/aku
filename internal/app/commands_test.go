@@ -2524,6 +2524,53 @@ func TestGotoLoggablePluginWithNoSelectionSkipsRestart(t *testing.T) {
 	}
 }
 
+func TestStopLogStream_IncrementsGen(t *testing.T) {
+	app := newTestApp()
+	genBefore := app.logStreamGen
+	app = app.stopLogStream()
+	if app.logStreamGen != genBefore+1 {
+		t.Fatalf("expected logStreamGen to increment from %d to %d, got %d", genBefore, genBefore+1, app.logStreamGen)
+	}
+}
+
+func TestSyncLogPanel_NotBypassedByDescribeMode(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	podObj := &unstructured.Unstructured{}
+	podObj.SetName("my-pod")
+	podObj.Object = map[string]any{
+		"metadata": map[string]any{"name": "my-pod", "namespace": "default"},
+		"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "app"},
+			},
+		},
+	}
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{podObj})
+
+	// Set DetailView to Describe mode (stale from before switching to logs)
+	app.layout.RightPanel().SetMode(msgs.DetailDescribe)
+
+	// Enable log mode and mark unavailable (simulating namespace switch)
+	app.layout.SetLogMode(true)
+	app.layout.ShowRightPanel()
+	app.layout.LogView().SetUnavailable(true)
+
+	// syncLogPanel should clear unavailable even though DetailView mode is Describe
+	app, _ = app.syncLogPanel()
+
+	if app.layout.LogView().IsUnavailable() {
+		t.Fatal("expected LogView to be available after syncLogPanel with objects present")
+	}
+}
+
 func TestHandleViewLogsNonLoggablePlugin(t *testing.T) {
 	app := newTestApp()
 

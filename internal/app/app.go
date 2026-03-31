@@ -449,9 +449,11 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if !listSearchActive && !detailSearchActive {
-			if panel := a.layout.RightPanel(); panel != nil && panel.Mode() == msgs.DetailDescribe {
-				a.describeDebounceSeq++
-				return a, a.describeDebounceCmd()
+			if !a.layout.IsLogMode() {
+				if panel := a.layout.RightPanel(); panel != nil && panel.Mode() == msgs.DetailDescribe {
+					a.describeDebounceSeq++
+					return a, a.describeDebounceCmd()
+				}
 			}
 			var descCmd tea.Cmd
 			a, descCmd = a.reloadDetailPanel()
@@ -1311,6 +1313,7 @@ func (a App) stopLogStream() App {
 		a.logStreamCancel = nil
 	}
 	a.logCh = nil
+	a.logStreamGen++ // reject stale LogLineMsg from cancelled stream
 	return a
 }
 
@@ -1375,10 +1378,6 @@ func (a App) startLogStream(podName, containerName, namespace string, opts k8s.L
 	a.logStreamCancel = cancel
 	gen := a.logStreamGen
 	client := a.k8sClient
-	// Show "Connecting..." in the log view
-	if lv := a.layout.LogView(); lv != nil {
-		lv.AppendLine("[connecting...]")
-	}
 	opCmd := a.statusBar.StartOperation()
 	return a, tea.Batch(opCmd, func() tea.Msg {
 		ch, err := k8s.StreamLogs(ctx, client, podName, containerName, namespace, opts)

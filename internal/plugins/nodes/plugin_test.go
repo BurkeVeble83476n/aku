@@ -37,8 +37,8 @@ func (m *mockPlugin) Describe(_ context.Context, _ *unstructured.Unstructured) (
 func TestNodePluginColumns(t *testing.T) {
 	p := New(nil, nil)
 	cols := p.Columns()
-	if len(cols) != 5 {
-		t.Fatalf("expected 5 columns, got %d", len(cols))
+	if len(cols) != 6 {
+		t.Fatalf("expected 6 columns, got %d", len(cols))
 	}
 }
 
@@ -54,6 +54,9 @@ func TestNodePluginRow(t *testing.T) {
 	}
 	if row[3] != "v1.28.3" {
 		t.Fatalf("expected 'v1.28.3', got '%s'", row[3])
+	}
+	if row[4] != "10.0.0.1" {
+		t.Fatalf("expected '10.0.0.1', got '%s'", row[4])
 	}
 }
 
@@ -88,6 +91,32 @@ func TestNodePluginRowRoles(t *testing.T) {
 	}
 	if !strings.Contains(roles, "master") {
 		t.Fatalf("expected roles to contain 'master', got '%s'", roles)
+	}
+}
+
+func TestNodePluginRowMissingIP(t *testing.T) {
+	p := New(nil, nil)
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Node",
+			"metadata": map[string]any{
+				"name":              "node-no-ip",
+				"creationTimestamp": "2024-01-01T00:00:00Z",
+			},
+			"status": map[string]any{
+				"conditions": []any{
+					map[string]any{"type": "Ready", "status": "True"},
+				},
+				"nodeInfo": map[string]any{
+					"kubeletVersion": "v1.28.3",
+				},
+			},
+		},
+	}
+	row := p.Row(obj)
+	if row[4] != "<none>" {
+		t.Fatalf("expected '<none>', got '%s'", row[4])
 	}
 }
 
@@ -223,6 +252,9 @@ func makeNode(name, readyStatus, version string) *unstructured.Unstructured {
 			"status": map[string]any{
 				"conditions": []any{
 					map[string]any{"type": "Ready", "status": readyStatus},
+				},
+				"addresses": []any{
+					map[string]any{"type": "InternalIP", "address": "10.0.0.1"},
 				},
 				"nodeInfo": map[string]any{
 					"kubeletVersion": version,

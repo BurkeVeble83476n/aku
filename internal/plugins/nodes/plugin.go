@@ -39,6 +39,7 @@ func (p *Plugin) Columns() []plugin.Column {
 		{Title: "STATUS", Width: 16},
 		{Title: "ROLES", Width: 16},
 		{Title: "VERSION", Width: 14},
+		{Title: "IP", Width: 16},
 		{Title: "AGE", Width: 8},
 	}
 }
@@ -48,8 +49,22 @@ func (p *Plugin) Row(obj *unstructured.Unstructured) []string {
 	status := nodeReadyStatus(obj)
 	roles := nodeRoles(obj)
 	version, _, _ := unstructured.NestedString(obj.Object, "status", "nodeInfo", "kubeletVersion")
+	addresses, _, _ := unstructured.NestedSlice(obj.Object, "status", "addresses")
+	ip := "<none>"
+	for _, a := range addresses {
+		addr, ok := a.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := addr["type"].(string); t == "InternalIP" {
+			if v, _ := addr["address"].(string); v != "" {
+				ip = v
+				break
+			}
+		}
+	}
 	age := render.FormatAge(obj)
-	return []string{name, status, roles, version, age}
+	return []string{name, status, roles, version, ip, age}
 }
 
 func (p *Plugin) YAML(obj *unstructured.Unstructured) (render.Content, error) {
