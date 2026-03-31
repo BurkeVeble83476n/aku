@@ -54,6 +54,9 @@ func SortStateForPlugin(p plugin.ResourcePlugin) SortState {
 // Sortable implementation. Uses stable sort to preserve informer order for
 // equal-key objects.
 func sortObjects(objs []*unstructured.Unstructured, state SortState, p plugin.ResourcePlugin) {
+	if state.Column == "" {
+		return
+	}
 	sortable, hasSortable := p.(plugin.Sortable)
 	column := strings.ToUpper(state.Column)
 

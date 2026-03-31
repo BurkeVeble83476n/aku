@@ -87,6 +87,11 @@ func (p *Plugin) DescribeUncovered(ctx context.Context, obj *unstructured.Unstru
 	return p.renderDescribe(obj, pod, p.store.List(configMapsGVR, ns), p.store.List(secretsGVR, ns))
 }
 
+// DefaultSort implements plugin.DefaultSorter.
+func (p *Plugin) DefaultSort() plugin.SortPreference {
+	return plugin.SortPreference{Column: "", Ascending: true}
+}
+
 // SortValue implements plugin.Sortable.
 func (p *Plugin) SortValue(obj *unstructured.Unstructured, column string) string {
 	switch column {

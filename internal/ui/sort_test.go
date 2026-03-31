@@ -141,6 +141,23 @@ func TestSortObjectsSecondarySortByName(t *testing.T) {
 	}
 }
 
+func TestSortObjectsEmptyColumnPreservesOrder(t *testing.T) {
+	objs := []*unstructured.Unstructured{
+		makeObj("charlie"),
+		makeObj("alpha"),
+		makeObj("bravo"),
+	}
+	state := SortState{Column: ""}
+	sortObjects(objs, state, &testPlugin{})
+
+	expected := []string{"charlie", "alpha", "bravo"}
+	for i, obj := range objs {
+		if obj.GetName() != expected[i] {
+			t.Fatalf("index %d: expected %q, got %q", i, expected[i], obj.GetName())
+		}
+	}
+}
+
 func makeObjWithTime(name string, created time.Time) *unstructured.Unstructured {
 	obj := makeObj(name)
 	obj.SetCreationTimestamp(metav1.NewTime(created))

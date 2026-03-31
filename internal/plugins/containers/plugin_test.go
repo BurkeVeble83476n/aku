@@ -213,6 +213,21 @@ func TestPluginSortValue(t *testing.T) {
 	}
 }
 
+func TestPluginDefaultSort(t *testing.T) {
+	p := New(nil, nil)
+	ds, ok := p.(plugin.DefaultSorter)
+	if !ok {
+		t.Fatal("Plugin should implement DefaultSorter")
+	}
+	pref := ds.DefaultSort()
+	if pref.Column != "" {
+		t.Fatalf("expected empty Column, got %q", pref.Column)
+	}
+	if !pref.Ascending {
+		t.Fatal("expected Ascending to be true")
+	}
+}
+
 func TestPluginImplementsInterfaces(t *testing.T) {
 	p := New(nil, nil)
 	if _, ok := p.(plugin.Sortable); !ok {
@@ -220,6 +235,9 @@ func TestPluginImplementsInterfaces(t *testing.T) {
 	}
 	if _, ok := p.(plugin.Uncoverable); !ok {
 		t.Fatal("Plugin should implement Uncoverable")
+	}
+	if _, ok := p.(plugin.DefaultSorter); !ok {
+		t.Fatal("Plugin should implement DefaultSorter")
 	}
 }
 
