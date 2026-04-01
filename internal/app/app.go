@@ -804,6 +804,7 @@ func (a App) refreshDetailPanelOpts(preserve bool) (App, tea.Cmd) {
 		return a, nil
 	}
 	panel := a.layout.RightPanel()
+	panel.SetEnvResolved(a.envResolved)
 	refresh := !preserve
 	switch panel.Mode() {
 	case msgs.DetailYAML:

@@ -42,19 +42,23 @@ type DetailView struct {
 	matchPositions []matchPosition
 	matchIndex     int
 	inlineSearch   string
+	envResolved    bool
 }
 
 // SetInlineSearch sets the inline search input text for rendering in the title.
 func (d *DetailView) SetInlineSearch(s string) { d.inlineSearch = s }
 
+// SetEnvResolved sets whether secrets are currently revealed, shown as [S] in the header.
+func (d *DetailView) SetEnvResolved(v bool) { d.envResolved = v }
+
 // SetLoading enables or disables the loading state.
-// When true, clears viewport content and resets any load error.
+// When true, resets any load error but preserves existing viewport content
+// so that scroll position is maintained across async reloads.
 // Returns a tea.Cmd to start the spinner animation (nil when disabling).
 func (d *DetailView) SetLoading(v bool) tea.Cmd {
 	if v {
 		d.loading = true
 		d.loadErr = ""
-		d.viewport.SetContent("")
 		return d.spinner.Tick
 	}
 	d.loading = false
@@ -256,13 +260,22 @@ func (d DetailView) modeName() string {
 	}
 }
 
+// buildTitle constructs the title string for the detail view header.
+func (d DetailView) buildTitle() string {
+	title := d.modeName()
+	if d.loading {
+		title += " " + d.spinner.View()
+	}
+	if d.envResolved {
+		title += " [S]"
+	}
+	return title
+}
+
 // View renders the detail view with mode label in the border.
 func (d DetailView) View() string {
 	if d.borderless && d.showHeader {
-		baseTitle := d.modeName()
-		if d.loading {
-			baseTitle += " " + d.spinner.View()
-		}
+		baseTitle := d.buildTitle()
 		titleRendered := BuildPanelTitle(baseTitle, d.filterState.DisplayPattern(),
 			d.searchState.DisplayPattern(), d.width, d.inlineSearch)
 		headerLine := DetailHeaderStyle.Width(d.width).Render(titleRendered)
@@ -280,10 +293,7 @@ func (d DetailView) View() string {
 	content := d.viewport.View()
 	styled := borderStyle.Width(d.width).Height(d.height).Render(content)
 
-	baseTitle := d.modeName()
-	if d.loading {
-		baseTitle += " " + d.spinner.View()
-	}
+	baseTitle := d.buildTitle()
 	titleRendered := BuildPanelTitle(baseTitle, d.filterState.DisplayPattern(), d.searchState.DisplayPattern(), d.width, d.inlineSearch)
 	return injectBorderTitle(styled, titleRendered, d.focused)
 }

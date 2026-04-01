@@ -64,6 +64,9 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 		return a.handleViewFocused(msgs.DetailYAML)
 	case command == "view-describe-focused":
 		return a.handleViewFocused(msgs.DetailDescribe)
+	case command == "view-describe-uncovered":
+		a.envResolved = true
+		return a.handleViewFocused(msgs.DetailDescribe)
 	case command == "view-logs-focused":
 		return a.handleViewFocused(msgs.DetailLogs)
 	// Cursor navigation — mode-aware
@@ -463,10 +466,13 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 	// Toggle env resolve
 	case command == "toggle-env-resolve":
 		a.envResolved = !a.envResolved
-		if a.layout.RightPanelVisible() && a.layout.RightPanel().Mode() == msgs.DetailDescribe {
-			var descCmd tea.Cmd
-			a, descCmd = a.reloadDetailPanel()
-			return a, descCmd
+		if a.layout.RightPanelVisible() {
+			a.layout.RightPanel().SetEnvResolved(a.envResolved)
+			if a.layout.RightPanel().Mode() == msgs.DetailDescribe {
+				var descCmd tea.Cmd
+				a, descCmd = a.reloadDetailPanel()
+				return a, descCmd
+			}
 		}
 		return a, nil
 

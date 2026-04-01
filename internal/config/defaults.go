@@ -8,6 +8,8 @@ func DefaultBindings() []Binding {
 		{Key: "ctrl+n", Help: "namespace", Command: "namespace-picker", Visible: true},
 		{Key: "y", Help: "yaml", Command: "view-yaml-focused", Visible: true},
 		{Key: "d", Help: "describe", Command: "view-describe-focused", Visible: true},
+		{Key: "x", Help: "uncovered", Command: "view-describe-uncovered", Scope: "resources",
+			For: []string{"pods", "secrets", "containers"}, Visible: true},
 		{Key: "Z", Help: "zoom", Command: "toggle-zoom", Visible: true},
 		{Key: "e", Help: "edit", Command: "edit", Visible: true},
 		{Key: "g", Help: "go to", Visible: true, Keys: []Binding{
