@@ -31,7 +31,7 @@ func DescribeContainer(
 		secs = indexByName(secrets)
 	}
 
-	describeSpec(b, level, c)
+	describeSpec(b, level, c, status)
 	if status != nil {
 		describeContainerStatus(b, level, *status)
 	}
@@ -44,8 +44,11 @@ func DescribeContainer(
 
 // --- container section helpers ---
 
-func describeSpec(b *render.Builder, level int, c corev1.Container) {
+func describeSpec(b *render.Builder, level int, c corev1.Container, status *corev1.ContainerStatus) {
 	b.KV(level, "Image", c.Image)
+	if status != nil && status.ImageID != "" {
+		b.KV(level, "ImageID", status.ImageID)
+	}
 
 	if len(c.Ports) > 0 {
 		var portStrs []string

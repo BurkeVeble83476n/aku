@@ -54,7 +54,7 @@ func TestDescribeSpec(t *testing.T) {
 			{ContainerPort: 80, Protocol: corev1.ProtocolTCP, Name: "http"},
 		},
 	}
-	describeSpec(b, render.LEVEL_2, c)
+	describeSpec(b, render.LEVEL_2, c, nil)
 	out := b.Build()
 	if !strings.Contains(out.Raw, "nginx:1.25") {
 		t.Fatalf("expected image in output, got:\n%s", out.Raw)
@@ -76,7 +76,7 @@ func TestDescribeSpecMultiplePorts(t *testing.T) {
 			{ContainerPort: 443, Protocol: corev1.ProtocolTCP},
 		},
 	}
-	describeSpec(b, render.LEVEL_2, c)
+	describeSpec(b, render.LEVEL_2, c, nil)
 	out := b.Build()
 	if !strings.Contains(out.Raw, "Ports:") {
 		t.Fatalf("expected 'Ports:' (plural) for multiple ports, got:\n%s", out.Raw)
@@ -94,7 +94,7 @@ func TestDescribeSpecHostPort(t *testing.T) {
 			{ContainerPort: 80, HostPort: 8080, Protocol: corev1.ProtocolTCP},
 		},
 	}
-	describeSpec(b, render.LEVEL_2, c)
+	describeSpec(b, render.LEVEL_2, c, nil)
 	out := b.Build()
 	if !strings.Contains(out.Raw, "Host Port:") {
 		t.Fatalf("expected Host Port in output, got:\n%s", out.Raw)
