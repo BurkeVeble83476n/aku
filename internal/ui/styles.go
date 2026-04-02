@@ -23,8 +23,9 @@ var (
 	StatusHelpStyle    = lipgloss.NewStyle().Foreground(theme.Muted)
 	StatusErrorStyle   = lipgloss.NewStyle().Foreground(theme.Error).Bold(true)
 	StatusWarningStyle = lipgloss.NewStyle().Foreground(theme.Warning).Bold(true)
-	StatusOnlineStyle  = lipgloss.NewStyle().Foreground(theme.StatusRunning)
-	StatusOfflineStyle = lipgloss.NewStyle().Foreground(theme.Error)
+	// Context badge in status bar
+	ContextBadgeOnlineStyle  = lipgloss.NewStyle().Foreground(theme.TextOnAccent).Background(theme.StatusRunning).Bold(true).Padding(0, 1)
+	ContextBadgeOfflineStyle = lipgloss.NewStyle().Foreground(theme.TextOnAccent).Background(theme.Error).Bold(true).Padding(0, 1)
 
 	// Zoom indicator
 	ZoomIndicatorStyle = lipgloss.NewStyle().

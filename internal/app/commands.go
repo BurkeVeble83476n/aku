@@ -764,6 +764,7 @@ func (a App) closeRightPanel() App {
 	a = a.stopLogStream()
 	a.layout.SetLogMode(false)
 	a.envResolved = false
+	a.lastDetailKey = ""
 	a.layout.FocusResources()
 	a.keyTrie.Reset()
 	a.layout.HideRightPanel()
@@ -888,6 +889,8 @@ func (a App) handleView(mode msgs.DetailMode) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	a.lastDetailKey = ""
+
 	// Guard: only pods/containers support logs
 	if mode == msgs.DetailLogs {
 		focused := a.layout.FocusedSplit()
@@ -924,6 +927,8 @@ func (a App) handleViewFocused(mode msgs.DetailMode) (tea.Model, tea.Cmd) {
 	if !ok {
 		return a, nil
 	}
+
+	a.lastDetailKey = ""
 
 	// Guard: only pods/containers support logs
 	if mode == msgs.DetailLogs {

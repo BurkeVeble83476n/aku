@@ -101,20 +101,53 @@ func TestStatusBarIndicatorClear(t *testing.T) {
 	}
 }
 
+func TestStatusBarSetContextName(t *testing.T) {
+	sb := NewStatusBar(80)
+	if sb.contextName != "default" {
+		t.Fatalf("expected default context name %q, got %q", "default", sb.contextName)
+	}
+	sb.SetContextName("minikube")
+	if sb.contextName != "minikube" {
+		t.Fatalf("expected context name %q, got %q", "minikube", sb.contextName)
+	}
+	sb.SetContextName("")
+	if sb.contextName != "default" {
+		t.Fatalf("empty name should fall back to %q, got %q", "default", sb.contextName)
+	}
+}
+
+func TestTruncateContext(t *testing.T) {
+	short := "minikube"
+	if got := truncateContext(short, 24); got != short {
+		t.Fatalf("short name should be unchanged, got %q", got)
+	}
+	long := "my-very-long-cluster-name-exceeds"
+	got := truncateContext(long, 24)
+	runes := []rune(got)
+	if len(runes) != 24 {
+		t.Fatalf("truncated name should be 24 runes, got %d", len(runes))
+	}
+	if runes[len(runes)-1] != '…' {
+		t.Fatalf("truncated name should end with ellipsis, got %q", got)
+	}
+}
+
 func TestStatusBarHealthDotOnline(t *testing.T) {
 	sb := NewStatusBar(80)
+	sb.SetContextName("minikube")
 	sb.SetOnline(true)
 	view := sb.View()
-	if !strings.Contains(view, "●") {
-		t.Fatal("online status bar should contain health dot")
+	if !strings.Contains(view, "minikube") {
+		t.Fatal("online status bar should contain context name")
 	}
 }
 
 func TestStatusBarHealthDotOffline(t *testing.T) {
 	sb := NewStatusBar(80)
+	sb.SetContextName("minikube")
 	view := sb.View()
-	if !strings.Contains(view, "●") {
-		t.Fatal("offline status bar should contain health dot")
+	if !strings.Contains(view, "minikube") {
+		t.Fatal("offline status bar should contain context name")
 	}
 }
 

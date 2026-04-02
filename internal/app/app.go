@@ -110,6 +110,7 @@ type App struct {
 
 	describeGen         uint64
 	describeDebounceSeq uint64
+	lastDetailKey    string
 }
 
 // ResourceSpec describes a resource pane to open at startup.
@@ -149,6 +150,10 @@ func New(client *k8s.Client, store *k8s.Store, keymap *config.Keymap, cfg *confi
 		containerPicker:     ui.NewContainerPicker(40, 20),
 		timeRangePicker:     ui.NewTimeRangePicker(40, 20),
 		scaleOverlay:        ui.NewScaleOverlay(40, 20),
+	}
+
+	if client != nil {
+		a.statusBar.SetContextName(client.Context)
 	}
 
 	// Populate fuzzy picker with all registered plugins
@@ -433,6 +438,30 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Refresh drill-down child views when relevant resources update
 		a.refreshDrillDownSplits(msg.GVR, msg.Namespace)
+		// Detect resource identity change at cursor and refresh immediately
+		if a.layout.RightPanelVisible() {
+			newKey := a.detailKey()
+			if newKey != a.lastDetailKey {
+				if newKey == "" {
+					if a.layout.IsLogMode() {
+						a = a.stopLogStream()
+						if lv := a.layout.LogView(); lv != nil {
+							lv.ClearAndRestart()
+						}
+					} else if panel := a.layout.RightPanel(); panel != nil {
+						panel.ClearContent()
+					}
+					a.lastDetailKey = ""
+					return a, nil
+				}
+				a.lastDetailKey = newKey
+				if a.layout.IsLogMode() {
+					return a.refreshDetailPanelOrLog()
+				}
+				a, cmd := a.refreshDetailPanel()
+				return a, cmd
+			}
+		}
 		// Freeze automatic detail panel updates while a search/filter is
 		// active on either the resource list or the detail panel.
 		// Manual refresh (ctrl+r) still works.
@@ -450,11 +479,24 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if !listSearchActive && !detailSearchActive {
 			if !a.layout.IsLogMode() {
-				if panel := a.layout.RightPanel(); panel != nil && panel.Mode() == msgs.DetailDescribe {
-					a.describeDebounceSeq++
-					return a, a.describeDebounceCmd()
+				if panel := a.layout.RightPanel(); panel != nil {
+					if panel.Mode() == msgs.DetailDescribe {
+						if focused := a.layout.FocusedSplit(); focused != nil && (msg.GVR == focused.Plugin().GVR() || msg.GVR == eventsGVR) {
+							a.describeDebounceSeq++
+							return a, a.describeDebounceCmd()
+						}
+						return a, nil // unrelated GVR — skip describe reload
+					}
+					// YAML mode: only reload for matching GVR
+					if focused := a.layout.FocusedSplit(); focused != nil && msg.GVR == focused.Plugin().GVR() {
+						var descCmd tea.Cmd
+						a, descCmd = a.reloadDetailPanel()
+						return a, descCmd
+					}
+					return a, nil // unrelated GVR — skip YAML reload
 				}
 			}
+			// Log mode or no panel: existing path
 			var descCmd tea.Cmd
 			a, descCmd = a.reloadDetailPanel()
 			// Start log stream if log mode is waiting for objects
@@ -808,11 +850,13 @@ func (a App) refreshDetailPanelOpts(preserve bool) (App, tea.Cmd) {
 	refresh := !preserve
 	switch panel.Mode() {
 	case msgs.DetailYAML:
+		a.lastDetailKey = a.detailKey()
 		content, err := focused.Plugin().YAML(sel)
 		if err == nil {
 			panel.SetContent(content, refresh)
 		}
 	case msgs.DetailDescribe:
+		a.lastDetailKey = a.detailKey()
 		spinCmd := panel.SetLoading(true)
 		opCmd := a.statusBar.StartOperation()
 		a.describeGen++
@@ -908,6 +952,7 @@ func (a App) restartLogForCursor() (tea.Model, tea.Cmd) {
 	if !ok {
 		return a, nil
 	}
+	a.lastDetailKey = a.detailKey()
 	podName := resolvePodName(focused, selected)
 	ns := selected.GetNamespace()
 	if ns == "" {
@@ -1388,4 +1433,26 @@ func (a App) startLogStream(podName, containerName, namespace string, opts k8s.L
 		}
 		return msgs.LogStreamReadyMsg{Ch: ch, Gen: gen}
 	})
+}
+
+// detailKey returns a composite key for the currently focused split's
+// selected resource. The format mirrors resourcelist.go's SetObjects key:
+//
+//	all-namespaces: Kind/Namespace/Name
+//	single namespace: Kind/Name
+//
+// Returns "" if no split is focused or no resource is selected.
+func (a App) detailKey() string {
+	focused := a.layout.FocusedSplit()
+	if focused == nil {
+		return ""
+	}
+	sel := focused.Selected()
+	if sel == nil {
+		return ""
+	}
+	if focused.Namespace() == "" {
+		return sel.GetKind() + "/" + sel.GetNamespace() + "/" + sel.GetName()
+	}
+	return sel.GetKind() + "/" + sel.GetName()
 }

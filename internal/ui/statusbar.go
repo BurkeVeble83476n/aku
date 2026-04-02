@@ -13,6 +13,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const maxContextWidth = 24
+
 // StatusBar displays context-sensitive key help at the bottom.
 type StatusBar struct {
 	hints          []config.KeyHint
@@ -25,12 +27,13 @@ type StatusBar struct {
 	spinner        spinner.Model
 	online         bool
 	inflight       int
+	contextName    string
 }
 
 func NewStatusBar(width int) StatusBar {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
-	sp.Style = lipgloss.NewStyle().Foreground(theme.StatusRunning)
-	return StatusBar{width: width, spinner: sp}
+	sp.Style = lipgloss.NewStyle().Foreground(theme.TextOnAccent).Background(theme.StatusRunning)
+	return StatusBar{width: width, spinner: sp, contextName: "default"}
 }
 
 func (s *StatusBar) SetHints(hints []config.KeyHint) {
@@ -73,12 +76,33 @@ func (s *StatusBar) SetWidth(w int) {
 	s.width = w
 }
 
+func (s *StatusBar) SetContextName(name string) {
+	if name == "" {
+		name = "default"
+	}
+	s.contextName = name
+}
+
+func truncateContext(name string, max int) string {
+	if ansi.StringWidth(name) <= max {
+		return name
+	}
+	runes := []rune(name)
+	for i := len(runes) - 1; i > 0; i-- {
+		candidate := string(runes[:i]) + "…"
+		if ansi.StringWidth(candidate) <= max {
+			return candidate
+		}
+	}
+	return "…"
+}
+
 func (s *StatusBar) SetOnline(v bool) {
 	s.online = v
 	if v {
-		s.spinner.Style = lipgloss.NewStyle().Foreground(theme.StatusRunning)
+		s.spinner.Style = lipgloss.NewStyle().Foreground(theme.TextOnAccent).Background(theme.StatusRunning)
 	} else {
-		s.spinner.Style = lipgloss.NewStyle().Foreground(theme.Error)
+		s.spinner.Style = lipgloss.NewStyle().Foreground(theme.TextOnAccent).Background(theme.Error)
 	}
 }
 
@@ -127,12 +151,15 @@ func (s StatusBar) View() string {
 
 	// Health indicator slot
 	var healthSlot string
+	name := truncateContext(s.contextName, maxContextWidth)
+	badgeStyle := ContextBadgeOfflineStyle
+	if s.online {
+		badgeStyle = ContextBadgeOnlineStyle
+	}
 	if s.inflight > 0 {
-		healthSlot = s.spinner.View() + " "
-	} else if s.online {
-		healthSlot = StatusOnlineStyle.Render("●") + " "
+		healthSlot = badgeStyle.Render(name + " " + s.spinner.View())
 	} else {
-		healthSlot = StatusOfflineStyle.Render("●") + " "
+		healthSlot = badgeStyle.Render(name)
 	}
 
 	line = healthSlot
@@ -165,7 +192,7 @@ func (s StatusBar) View() string {
 
 	for i, h := range s.hints {
 		rendered := fmt.Sprintf("%s %s", StatusKeyStyle.Render(h.Key), StatusHelpStyle.Render(h.Help))
-		gap := "  "
+		gap := " "
 		if line == "" {
 			gap = ""
 		}

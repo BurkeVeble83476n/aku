@@ -3382,3 +3382,605 @@ func TestHandleGotoGVR_InvalidFormat(t *testing.T) {
 		t.Fatalf("expected 'pods' (unchanged), got %q", focused.Plugin().Name())
 	}
 }
+
+func TestDescribeKeySingleNamespace(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetKind("Pod")
+	obj.SetName("my-pod")
+	obj.SetNamespace("default")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{obj})
+
+	got := app.detailKey()
+	expected := "Pod/my-pod"
+	if got != expected {
+		t.Fatalf("detailKey() = %q, want %q", got, expected)
+	}
+}
+
+func TestDescribeKeyAllNamespaces(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	// Empty namespace means all-namespaces
+	app.layout.AddSplit(podsPlugin, "")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetKind("Pod")
+	obj.SetName("my-pod")
+	obj.SetNamespace("kube-system")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{obj})
+
+	got := app.detailKey()
+	expected := "Pod/kube-system/my-pod"
+	if got != expected {
+		t.Fatalf("detailKey() = %q, want %q", got, expected)
+	}
+}
+
+func TestDescribeKeyNoSelection(t *testing.T) {
+	app := newTestApp()
+
+	// No splits at all — should return ""
+	if got := app.detailKey(); got != "" {
+		t.Fatalf("detailKey() with no splits = %q, want \"\"", got)
+	}
+
+	// Add a split but don't set any objects — Selected() returns nil
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	if got := app.detailKey(); got != "" {
+		t.Fatalf("detailKey() with no selection = %q, want \"\"", got)
+	}
+}
+
+func TestDescribeRefreshOnResourceIdentityChange(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store so the ResourceUpdatedMsg handler can call store.List
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+
+	// Populate with two pods: pod-A (cursor 0) and pod-B
+	podA := &unstructured.Unstructured{}
+	podA.SetName("pod-a")
+	podA.SetNamespace("default")
+	podB := &unstructured.Unstructured{}
+	podB.SetName("pod-b")
+	podB.SetNamespace("default")
+
+	store.CacheUpsert(podsGVR, "default", podA)
+	store.CacheUpsert(podsGVR, "default", podB)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{podA, podB})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("expected right panel visible after view-describe")
+	}
+	if app.layout.RightPanel().Mode() != msgs.DetailDescribe {
+		t.Fatal("expected describe mode")
+	}
+
+	// Record initial state
+	initialKey := app.lastDetailKey
+	if initialKey == "" {
+		t.Fatal("expected lastDetailKey to be set after view-describe")
+	}
+	initialGen := app.describeGen
+
+	// Simulate pod-A deleted: remove from store, keep only pod-B
+	store.CacheDelete(podsGVR, "default", podA)
+
+	// Send ResourceUpdatedMsg — handler calls store.List (returns [pod-B]),
+	// UpdateSplitObjects moves cursor 0 to pod-B, identity check detects change.
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify lastDetailKey changed to reflect pod-B
+	newKey := app.lastDetailKey
+	if newKey == initialKey {
+		t.Fatalf("expected lastDetailKey to change; still %q", newKey)
+	}
+	if newKey == "" {
+		t.Fatal("expected lastDetailKey to be non-empty (pod-B is at cursor)")
+	}
+
+	// Verify describeGen was incremented (immediate refresh, not debounce)
+	if app.describeGen <= initialGen {
+		t.Fatalf("expected describeGen to increment: was %d, got %d", initialGen, app.describeGen)
+	}
+}
+
+func TestDescribePanelClearedOnEmptyList(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+
+	// Populate with one pod
+	pod := &unstructured.Unstructured{}
+	pod.SetName("only-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	if app.lastDetailKey == "" {
+		t.Fatal("expected lastDetailKey to be set after view-describe")
+	}
+
+	// Delete the pod from store — list becomes empty
+	store.CacheDelete(podsGVR, "default", pod)
+
+	// Send ResourceUpdatedMsg
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify lastDetailKey is cleared
+	if app.lastDetailKey != "" {
+		t.Fatalf("expected lastDetailKey to be empty, got %q", app.lastDetailKey)
+	}
+}
+
+func TestDescribeSameResourceUsesDebounce(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+
+	// Populate with one pod
+	pod := &unstructured.Unstructured{}
+	pod.SetName("my-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	// Record state after opening describe
+	genAfterOpen := app.describeGen
+	debounceSeqAfterOpen := app.describeDebounceSeq
+
+	// Send ResourceUpdatedMsg with the same resource still at cursor
+	// (store still has the same pod — identity unchanged)
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify debounce path was taken (describeDebounceSeq incremented)
+	if app.describeDebounceSeq <= debounceSeqAfterOpen {
+		t.Fatalf("expected describeDebounceSeq to increment: was %d, got %d",
+			debounceSeqAfterOpen, app.describeDebounceSeq)
+	}
+
+	// Verify describeGen was NOT incremented (no immediate refresh)
+	if app.describeGen != genAfterOpen {
+		t.Fatalf("expected describeGen unchanged: was %d, got %d",
+			genAfterOpen, app.describeGen)
+	}
+}
+
+func TestDescribeDebounceNotResetByUnrelatedGVR(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store and populate with one pod
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+	pod := &unstructured.Unstructured{}
+	pod.SetName("my-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	// Record describeDebounceSeq after opening describe
+	seqBefore := app.describeDebounceSeq
+
+	// Send ResourceUpdatedMsg with an UNRELATED GVR (deployments)
+	deploymentsGVR := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	msg := k8s.ResourceUpdatedMsg{GVR: deploymentsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify describeDebounceSeq is UNCHANGED — unrelated GVR should not trigger debounce
+	if app.describeDebounceSeq != seqBefore {
+		t.Fatalf("expected describeDebounceSeq unchanged for unrelated GVR: was %d, got %d",
+			seqBefore, app.describeDebounceSeq)
+	}
+}
+
+func TestDescribeDebounceFiresForMatchingGVR(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store and populate with one pod
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+	pod := &unstructured.Unstructured{}
+	pod.SetName("my-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	// Record describeDebounceSeq after opening describe
+	seqBefore := app.describeDebounceSeq
+
+	// Send ResourceUpdatedMsg with the MATCHING pods GVR
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify describeDebounceSeq INCREMENTED — matching GVR should trigger debounce
+	if app.describeDebounceSeq <= seqBefore {
+		t.Fatalf("expected describeDebounceSeq to increment for matching GVR: was %d, got %d",
+			seqBefore, app.describeDebounceSeq)
+	}
+}
+
+func TestDescribeDebounceFiresForEventsGVR(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store and populate with one pod
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+	pod := &unstructured.Unstructured{}
+	pod.SetName("my-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	// Record describeDebounceSeq after opening describe
+	seqBefore := app.describeDebounceSeq
+
+	// Send ResourceUpdatedMsg with events GVR — describe panel shows related events
+	eventsGVR := schema.GroupVersionResource{Group: "", Version: "v1", Resource: "events"}
+	msg := k8s.ResourceUpdatedMsg{GVR: eventsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify describeDebounceSeq INCREMENTED — events GVR should trigger debounce
+	if app.describeDebounceSeq <= seqBefore {
+		t.Fatalf("expected describeDebounceSeq to increment for events GVR: was %d, got %d",
+			seqBefore, app.describeDebounceSeq)
+	}
+}
+
+func TestLastDescribedKeyClearedOnPanelClose(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Populate with one pod
+	pod := &unstructured.Unstructured{}
+	pod.SetName("test-pod")
+	pod.SetNamespace("default")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	if app.lastDetailKey == "" {
+		t.Fatal("expected lastDetailKey to be set after view-describe")
+	}
+
+	// Close panel
+	model, _ = app.executeCommand("close-panel")
+	app = model.(App)
+
+	if app.lastDetailKey != "" {
+		t.Fatalf("expected lastDetailKey to be empty after close-panel, got %q", app.lastDetailKey)
+	}
+}
+
+func TestLastDetailKeySetAfterModeSwitch(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Populate with one pod
+	pod := &unstructured.Unstructured{}
+	pod.SetName("test-pod")
+	pod.SetNamespace("default")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open describe panel
+	model, _ := app.executeCommand("view-describe")
+	app = model.(App)
+
+	if app.lastDetailKey == "" {
+		t.Fatal("expected lastDetailKey to be set after view-describe")
+	}
+
+	// Switch to YAML mode
+	model, _ = app.executeCommand("view-yaml")
+	app = model.(App)
+
+	// YAML mode now sets lastDetailKey via refreshDetailPanelOpts
+	if app.lastDetailKey == "" {
+		t.Fatal("expected lastDetailKey to be non-empty after view-yaml (YAML sets it)")
+	}
+}
+
+func TestYAMLRefreshOnResourceIdentityChange(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store so the ResourceUpdatedMsg handler can call store.List
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+
+	// Populate with two pods: pod-A (cursor 0) and pod-B
+	podA := &unstructured.Unstructured{}
+	podA.SetName("pod-a")
+	podA.SetNamespace("default")
+	podB := &unstructured.Unstructured{}
+	podB.SetName("pod-b")
+	podB.SetNamespace("default")
+
+	store.CacheUpsert(podsGVR, "default", podA)
+	store.CacheUpsert(podsGVR, "default", podB)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{podA, podB})
+
+	// Open YAML panel
+	model, _ := app.executeCommand("view-yaml")
+	app = model.(App)
+
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("expected right panel visible after view-yaml")
+	}
+	if app.layout.RightPanel().Mode() != msgs.DetailYAML {
+		t.Fatal("expected YAML mode")
+	}
+
+	// Record initial lastDetailKey set by view-yaml
+	initialKey := app.lastDetailKey
+
+	// Simulate pod-A deleted: remove from store, keep only pod-B
+	store.CacheDelete(podsGVR, "default", podA)
+
+	// Send ResourceUpdatedMsg — handler calls store.List (returns [pod-B]),
+	// UpdateSplitObjects moves cursor 0 to pod-B, identity check detects change.
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify lastDetailKey changed to reflect pod-B
+	newKey := app.lastDetailKey
+	if newKey == initialKey {
+		t.Fatalf("expected lastDetailKey to change; still %q", newKey)
+	}
+	if newKey == "" {
+		t.Fatal("expected lastDetailKey to be non-empty (pod-B is at cursor)")
+	}
+}
+
+func TestLogRestartOnResourceIdentityChange(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store so the ResourceUpdatedMsg handler can call store.List
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+
+	// Populate with two pods: pod-A (cursor 0) and pod-B
+	podA := &unstructured.Unstructured{}
+	podA.SetName("pod-a")
+	podA.SetNamespace("default")
+	podB := &unstructured.Unstructured{}
+	podB.SetName("pod-b")
+	podB.SetNamespace("default")
+
+	store.CacheUpsert(podsGVR, "default", podA)
+	store.CacheUpsert(podsGVR, "default", podB)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{podA, podB})
+
+	// Set up log mode manually: show right panel and enable log mode
+	app.layout.SetLogMode(true)
+	app.layout.ShowRightPanel()
+
+	// Set lastDetailKey to the first pod's key
+	app.lastDetailKey = app.detailKey()
+	initialKey := app.lastDetailKey
+	if initialKey == "" {
+		t.Fatal("expected lastDetailKey to be set for pod-A")
+	}
+
+	initialDebounceSeq := app.logDebounceSeq
+
+	// Simulate pod-A deleted: remove from store, keep only pod-B
+	store.CacheDelete(podsGVR, "default", podA)
+
+	// Send ResourceUpdatedMsg — handler calls store.List (returns [pod-B]),
+	// UpdateSplitObjects moves cursor 0 to pod-B, identity check detects change.
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify lastDetailKey changed to reflect pod-B
+	newKey := app.lastDetailKey
+	if newKey == initialKey {
+		t.Fatalf("expected lastDetailKey to change; still %q", newKey)
+	}
+	if newKey == "" {
+		t.Fatal("expected lastDetailKey to be non-empty (pod-B is at cursor)")
+	}
+
+	// Verify logDebounceSeq was incremented (indicating refreshDetailPanelOrLog was called)
+	if app.logDebounceSeq <= initialDebounceSeq {
+		t.Fatalf("expected logDebounceSeq to increment: was %d, got %d", initialDebounceSeq, app.logDebounceSeq)
+	}
+}
+
+func TestYAMLReloadSkipsUnrelatedGVR(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store and populate with one pod
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+	pod := &unstructured.Unstructured{}
+	pod.SetName("my-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open YAML panel
+	model, _ := app.executeCommand("view-yaml")
+	app = model.(App)
+
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("expected right panel visible after view-yaml")
+	}
+	if app.layout.RightPanel().Mode() != msgs.DetailYAML {
+		t.Fatal("expected YAML mode")
+	}
+
+	// Record lastDetailKey set by YAML open
+	keyBefore := app.lastDetailKey
+
+	// Send ResourceUpdatedMsg with an UNRELATED GVR (deployments)
+	deploymentsGVR := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	msg := k8s.ResourceUpdatedMsg{GVR: deploymentsGVR, Namespace: "default"}
+	result, cmd := app.update(msg)
+	app = result.(App)
+
+	// Verify cmd is nil — unrelated GVR should NOT trigger a reload
+	if cmd != nil {
+		t.Fatal("expected nil cmd for unrelated GVR in YAML mode")
+	}
+
+	// Verify lastDetailKey is unchanged
+	if app.lastDetailKey != keyBefore {
+		t.Fatalf("expected lastDetailKey unchanged for unrelated GVR: was %q, got %q",
+			keyBefore, app.lastDetailKey)
+	}
+}
+
+func TestYAMLReloadFiresForMatchingGVR(t *testing.T) {
+	app := newTestApp()
+
+	podsGVR := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	podsPlugin := &mockPlugin{name: "pods", gvr: podsGVR}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Create a store and populate with one pod
+	store := k8s.NewStore(nil, nil)
+	app.store = store
+	pod := &unstructured.Unstructured{}
+	pod.SetName("my-pod")
+	pod.SetNamespace("default")
+	store.CacheUpsert(podsGVR, "default", pod)
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{pod})
+
+	// Open YAML panel
+	model, _ := app.executeCommand("view-yaml")
+	app = model.(App)
+
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("expected right panel visible after view-yaml")
+	}
+	if app.layout.RightPanel().Mode() != msgs.DetailYAML {
+		t.Fatal("expected YAML mode")
+	}
+
+	// Send ResourceUpdatedMsg with the MATCHING pods GVR
+	// Identity check sees same key (no change), falls through to YAML GVR matching path
+	// YAML reload is synchronous so cmd is nil, but lastDetailKey should be preserved
+	msg := k8s.ResourceUpdatedMsg{GVR: podsGVR, Namespace: "default"}
+	result, _ := app.update(msg)
+	app = result.(App)
+
+	// Verify lastDetailKey is still set — matching GVR reload preserves key
+	if app.lastDetailKey == "" {
+		t.Fatal("expected lastDetailKey to be set after matching GVR reload in YAML mode")
+	}
+}
