@@ -103,15 +103,15 @@ type App struct {
 	pendingDebug      *pendingDebugAction          // debug action waiting for confirm
 
 	// Log stream
-	logStreamCancel    context.CancelFunc
-	logCh              <-chan string
-	logDebounceSeq     uint64
-	logStreamGen       uint64
-	searchDebounceSeq  uint64
+	logStreamCancel   context.CancelFunc
+	logCh             <-chan string
+	logDebounceSeq    uint64
+	logStreamGen      uint64
+	searchDebounceSeq uint64
 
 	describeGen         uint64
 	describeDebounceSeq uint64
-	lastDetailKey    string
+	lastDetailKey       string
 }
 
 // ResourceSpec describes a resource pane to open at startup.
@@ -1095,10 +1095,10 @@ func (a App) currentHints() []config.KeyHint {
 func (a App) syncIndicators() App {
 	indicator := ""
 	if a.layout.AnyZoomed() {
-		indicator += ui.ZoomIndicatorStyle.Render("⤢ ")
+		indicator += ui.ZoomIndicatorStyle.Render(" ⤢ ")
 	}
 	if a.pfRegistry != nil && a.pfRegistry.Count() > 0 {
-		indicator += ui.PortForwardIndicatorStyle.Render(fmt.Sprintf("PF:%d ", a.pfRegistry.Count()))
+		indicator += ui.PortForwardIndicatorStyle.Render(fmt.Sprintf(" PF:%d ", a.pfRegistry.Count()))
 	}
 	a.statusBar.SetIndicator(indicator)
 	return a
