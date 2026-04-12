@@ -26,6 +26,7 @@ A terminal UI for managing Kubernetes clusters, built with [Bubble Tea](https://
 - Live log streaming with time range presets, container selection, and autoscroll
 - Log syntax highlighting (JSON, log levels, IPs, URLs, UUIDs, timestamps, paths, key=value)
 - Split panes with independent namespace, filter, and cursor per pane
+- Vertical and horizontal layout orientation (toggle with `%` or `--layout` flag)
 - Zoom to full-screen any split or detail panel
 
 **Operations**
@@ -74,8 +75,10 @@ aku --context staging                  # specific context
 aku -n kube-system                     # specific namespace
 aku -r pods,deploy                     # open with specific resources
 aku -r pods -d logs                    # open pods with log panel
+aku -l horizontal                      # start in horizontal layout
 aku -r certificates.cert-manager.io/v1 # qualified resource (when names collide)
 aku --kubeconfig /path/to/kubeconfig   # custom kubeconfig path
+aku --version                          # show version
 ```
 
 | Flag | Short | Description |
@@ -85,6 +88,8 @@ aku --kubeconfig /path/to/kubeconfig   # custom kubeconfig path
 | `--namespace` | `-n` | Kubernetes namespace |
 | `--resource` | `-r` | Resources to display (repeatable) |
 | `--details` | `-d` | Open detail panel (`y`/yaml, `d`/describe, `l`/logs) |
+| `--layout` | `-l` | Layout orientation (`v`/vertical, `h`/horizontal) |
+| `--version` | `-v` | Show version |
 
 aku reads your kubeconfig from `$KUBECONFIG` or `~/.kube/config`.
 
@@ -174,6 +179,12 @@ syntax:
 | Key | Action |
 |-----|--------|
 | `q` | Quit / close overlay |
+| `j/k` or `↑/↓` | Cursor up/down (list) / scroll (detail) |
+| `h/l` or `←/→` | Scroll left/right |
+| `Tab` | Switch panel (resources ↔ details) |
+| `Shift+Tab` | Next split pane |
+| `Shift+←/→/↑/↓` | Directional focus (orientation-aware) |
+| `%` | Toggle layout orientation |
 | `Ctrl+n` | Namespace picker |
 | `:` | Resource picker |
 | `?` | Help overlay |
@@ -189,24 +200,23 @@ syntax:
 
 | Key | Action |
 |-----|--------|
-| `j/k` | Cursor up/down |
 | `gg` / `G` | Top / bottom |
 | `Enter` | Drill down / open detail |
-| `Tab` / `Shift+Tab` | Next / prev split pane |
+| `Tab` | Switch to detail panel |
+| `Shift+Tab` | Next split pane |
 | `Space` | Toggle select |
 | `Ctrl+a` | Select all |
 | `Ctrl+d` | Delete selected |
 | `g + p/d/s/v/c/n` | Go to pods/deployments/secrets/services/configmaps/namespaces |
-| `h + p/d/s/v/c` | Open split: pods/deployments/secrets/services/configmaps |
+| `o + p/d/s/v/c` | Open split: pods/deployments/secrets/services/configmaps |
 | `S + n/N/a/s` | Sort by name/namespace/age/status |
 
 ### Detail Panel
 
 | Key | Action |
 |-----|--------|
-| `h` / `Left` | Back to list |
+| `Tab` | Back to list |
 | `w` | Toggle word wrap |
-| `H/L` | Scroll left/right |
 | `x` | Resolve env variables |
 | `r` | Refresh |
 

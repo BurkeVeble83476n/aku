@@ -13,6 +13,7 @@ import (
 	"github.com/aohoyd/aku/internal/config"
 	"github.com/aohoyd/aku/internal/helm"
 	"github.com/aohoyd/aku/internal/k8s"
+	"github.com/aohoyd/aku/internal/layout"
 	"github.com/aohoyd/aku/internal/msgs"
 	"github.com/aohoyd/aku/internal/plugin"
 	"github.com/aohoyd/aku/internal/portforward"
@@ -138,14 +139,105 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 
 		return a, cmd
 
-	case command == "focus-panel":
-		if a.layout.FocusedSplit() != nil && a.layout.FocusedResources() && a.layout.RightPanelVisible() {
-			a.layout.FocusDetails()
+	case command == "focus-left":
+		if a.layout.Orientation() == layout.OrientationVertical {
+			// Vertical: left = FocusResources (exit-detail behavior)
+			if a.layout.FocusedDetails() {
+				if a.layout.DetailZoomed() {
+					a.layout.ToggleZoomDetail()
+					a = a.syncIndicators()
+					return a, nil
+				}
+				a.envResolved = false
+				a.layout.FocusResources()
+				a.keyTrie.Reset()
+				a.statusBar.SetHints(a.currentHints())
+			}
+		} else {
+			// Horizontal: left = FocusPrev
+			a.keyTrie.Reset()
+			a.layout.FocusPrev()
+			var descCmd tea.Cmd
+			a, descCmd = a.refreshDetailPanel()
+			var cmd tea.Cmd
+			a, cmd = a.syncLogPanel()
 			a.statusBar.SetHints(a.currentHints())
+			return a, tea.Batch(descCmd, cmd)
 		}
 		return a, nil
 
-	case command == "exit-detail":
+	case command == "focus-right":
+		if a.layout.Orientation() == layout.OrientationVertical {
+			// Vertical: right = FocusDetails (focus-panel behavior)
+			if a.layout.FocusedSplit() != nil && a.layout.FocusedResources() && a.layout.RightPanelVisible() {
+				a.layout.FocusDetails()
+				a.statusBar.SetHints(a.currentHints())
+			}
+		} else {
+			// Horizontal: right = FocusNext
+			a.keyTrie.Reset()
+			a.layout.FocusNext()
+			var descCmd tea.Cmd
+			a, descCmd = a.refreshDetailPanel()
+			var cmd tea.Cmd
+			a, cmd = a.syncLogPanel()
+			a.statusBar.SetHints(a.currentHints())
+			return a, tea.Batch(descCmd, cmd)
+		}
+		return a, nil
+
+	case command == "focus-up":
+		if a.layout.Orientation() == layout.OrientationVertical {
+			// Vertical: up = FocusPrev
+			a.keyTrie.Reset()
+			a.layout.FocusPrev()
+			var descCmd tea.Cmd
+			a, descCmd = a.refreshDetailPanel()
+			var cmd tea.Cmd
+			a, cmd = a.syncLogPanel()
+			a.statusBar.SetHints(a.currentHints())
+			return a, tea.Batch(descCmd, cmd)
+		} else {
+			// Horizontal: up = FocusResources (exit-detail behavior)
+			if a.layout.FocusedDetails() {
+				if a.layout.DetailZoomed() {
+					a.layout.ToggleZoomDetail()
+					a = a.syncIndicators()
+					return a, nil
+				}
+				a.envResolved = false
+				a.layout.FocusResources()
+				a.keyTrie.Reset()
+				a.statusBar.SetHints(a.currentHints())
+			}
+		}
+		return a, nil
+
+	case command == "focus-down":
+		if a.layout.Orientation() == layout.OrientationVertical {
+			// Vertical: down = FocusNext
+			a.keyTrie.Reset()
+			a.layout.FocusNext()
+			var descCmd tea.Cmd
+			a, descCmd = a.refreshDetailPanel()
+			var cmd tea.Cmd
+			a, cmd = a.syncLogPanel()
+			a.statusBar.SetHints(a.currentHints())
+			return a, tea.Batch(descCmd, cmd)
+		} else {
+			// Horizontal: down = FocusDetails (focus-panel behavior)
+			if a.layout.FocusedSplit() != nil && a.layout.FocusedResources() && a.layout.RightPanelVisible() {
+				a.layout.FocusDetails()
+				a.statusBar.SetHints(a.currentHints())
+			}
+		}
+		return a, nil
+
+	case command == "toggle-orientation":
+		a.layout.ToggleOrientation()
+		return a, nil
+
+	case command == "toggle-panel-focus":
 		if a.layout.FocusedDetails() {
 			if a.layout.DetailZoomed() {
 				a.layout.ToggleZoomDetail()
@@ -156,8 +248,21 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 			a.layout.FocusResources()
 			a.keyTrie.Reset()
 			a.statusBar.SetHints(a.currentHints())
+		} else if a.layout.FocusedSplit() != nil && a.layout.RightPanelVisible() {
+			a.layout.FocusDetails()
+			a.statusBar.SetHints(a.currentHints())
 		}
 		return a, nil
+
+	case command == "focus-next-split":
+		a.keyTrie.Reset()
+		a.layout.FocusNext()
+		var descCmd tea.Cmd
+		a, descCmd = a.refreshDetailPanel()
+		var cmd tea.Cmd
+		a, cmd = a.syncLogPanel()
+		a.statusBar.SetHints(a.currentHints())
+		return a, tea.Batch(descCmd, cmd)
 
 	// Search navigation
 	case command == "search-next":
@@ -210,7 +315,16 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 			}
 		}
 		if a.layout.FocusedDetails() {
-			return a.executeCommand("exit-detail")
+			if a.layout.DetailZoomed() {
+				a.layout.ToggleZoomDetail()
+				a = a.syncIndicators()
+				return a, nil
+			}
+			a.envResolved = false
+			a.layout.FocusResources()
+			a.keyTrie.Reset()
+			a.statusBar.SetHints(a.currentHints())
+			return a, nil
 		}
 		// Pop drill-down before closing panel
 		if focused := a.layout.FocusedSplit(); focused != nil && focused.InDrillDown() {
@@ -290,26 +404,6 @@ func (a App) executeCommand(command string) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, nil
-
-	// Focus
-	case command == "focus-next":
-		a.keyTrie.Reset()
-		a.layout.FocusNext()
-		var descCmd tea.Cmd
-		a, descCmd = a.refreshDetailPanel()
-		var cmd tea.Cmd
-		a, cmd = a.syncLogPanel()
-		a.statusBar.SetHints(a.currentHints())
-		return a, tea.Batch(descCmd, cmd)
-	case command == "focus-prev":
-		a.keyTrie.Reset()
-		a.layout.FocusPrev()
-		var descCmd tea.Cmd
-		a, descCmd = a.refreshDetailPanel()
-		var cmd tea.Cmd
-		a, cmd = a.syncLogPanel()
-		a.statusBar.SetHints(a.currentHints())
-		return a, tea.Batch(descCmd, cmd)
 
 	// Quit
 	case command == "quit":

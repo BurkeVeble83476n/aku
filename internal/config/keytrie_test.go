@@ -154,7 +154,7 @@ func TestLoadKeymapFallsBackToDefaults(t *testing.T) {
 
 func TestSplitKeys(t *testing.T) {
 	trie := DefaultKeyTrie()
-	trie.Press("h")
+	trie.Press("o")
 	cmd, _, resolved := trie.Press("p")
 	if !resolved || cmd != "split-pods" {
 		t.Fatalf("expected 'split-pods', got resolved=%v cmd='%s'", resolved, cmd)
@@ -272,8 +272,8 @@ func TestDetailPanelExitBindings(t *testing.T) {
 		key     string
 		command string
 	}{
-		{"h", "exit-detail"},
-		{"left", "exit-detail"},
+		{"h", "scroll-left"},
+		{"left", "scroll-left"},
 		{"esc", "clear-overlay"},
 	}
 	for _, tt := range tests {
@@ -291,7 +291,7 @@ func TestDetailPanelExitBindings(t *testing.T) {
 func TestNavigationBindingsAreHidden(t *testing.T) {
 	trie := DefaultKeyTrie()
 	hints := trie.CurrentHints()
-	hidden := map[string]bool{"j": true, "k": true, "n": true, "N": true, "?": true, "up": true, "down": true, "enter": true, "right": true}
+	hidden := map[string]bool{"j": true, "k": true, "h": true, "n": true, "N": true, "?": true, "up": true, "down": true, "left": true, "right": true, "enter": true}
 	for _, h := range hints {
 		if hidden[h.Key] {
 			t.Fatalf("key %q should be hidden from hints", h.Key)

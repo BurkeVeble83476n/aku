@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/aohoyd/aku/internal/config"
 	"github.com/aohoyd/aku/internal/k8s"
+	"github.com/aohoyd/aku/internal/layout"
 	"github.com/aohoyd/aku/internal/msgs"
 	"github.com/aohoyd/aku/internal/plugin"
 	"github.com/aohoyd/aku/internal/portforward"
@@ -53,7 +54,7 @@ func newTestApp() App {
 	km := config.DefaultKeymap()
 	cfg := config.DefaultConfig()
 	plugin.Reset()
-	return New(nil, nil, km, cfg, nil, nil, nil, nil)
+	return New(nil, nil, km, cfg, nil, nil, nil, nil, layout.OrientationVertical)
 }
 
 func TestSearchOpenCommand(t *testing.T) {
@@ -234,7 +235,7 @@ func TestQuitWithOneSplit(t *testing.T) {
 	}
 }
 
-func TestFocusNextCommand(t *testing.T) {
+func TestFocusDownVerticalCommand(t *testing.T) {
 	app := newTestApp()
 
 	podsPlugin := &mockPlugin{
@@ -258,24 +259,24 @@ func TestFocusNextCommand(t *testing.T) {
 		t.Fatalf("expected focus at index 1, got %d", app.layout.FocusIndex())
 	}
 
-	// Execute focus-next: should wrap around to 0
-	model, _ := app.executeCommand("focus-next")
+	// Execute focus-down (vertical = FocusNext): should wrap around to 0
+	model, _ := app.executeCommand("focus-down")
 	app = model.(App)
 
 	if app.layout.FocusIndex() != 0 {
-		t.Fatalf("expected focus at index 0 after focus-next, got %d", app.layout.FocusIndex())
+		t.Fatalf("expected focus at index 0 after focus-down, got %d", app.layout.FocusIndex())
 	}
 
-	// Execute focus-next again: should go to 1
-	model, _ = app.executeCommand("focus-next")
+	// Execute focus-down again: should go to 1
+	model, _ = app.executeCommand("focus-down")
 	app = model.(App)
 
 	if app.layout.FocusIndex() != 1 {
-		t.Fatalf("expected focus at index 1 after second focus-next, got %d", app.layout.FocusIndex())
+		t.Fatalf("expected focus at index 1 after second focus-down, got %d", app.layout.FocusIndex())
 	}
 }
 
-func TestFocusPrevCommand(t *testing.T) {
+func TestFocusUpVerticalCommand(t *testing.T) {
 	app := newTestApp()
 
 	podsPlugin := &mockPlugin{
@@ -299,20 +300,20 @@ func TestFocusPrevCommand(t *testing.T) {
 		t.Fatalf("expected focus at index 1, got %d", app.layout.FocusIndex())
 	}
 
-	// Execute focus-prev: should go to 0
-	model, _ := app.executeCommand("focus-prev")
+	// Execute focus-up (vertical = FocusPrev): should go to 0
+	model, _ := app.executeCommand("focus-up")
 	app = model.(App)
 
 	if app.layout.FocusIndex() != 0 {
-		t.Fatalf("expected focus at index 0 after focus-prev, got %d", app.layout.FocusIndex())
+		t.Fatalf("expected focus at index 0 after focus-up, got %d", app.layout.FocusIndex())
 	}
 
-	// Execute focus-prev again: should wrap around to 1
-	model, _ = app.executeCommand("focus-prev")
+	// Execute focus-up again: should wrap around to 1
+	model, _ = app.executeCommand("focus-up")
 	app = model.(App)
 
 	if app.layout.FocusIndex() != 1 {
-		t.Fatalf("expected focus at index 1 after second focus-prev, got %d", app.layout.FocusIndex())
+		t.Fatalf("expected focus at index 1 after second focus-up, got %d", app.layout.FocusIndex())
 	}
 }
 
@@ -512,8 +513,8 @@ func TestFocusSwitchRefreshesPanel(t *testing.T) {
 		t.Fatal("expected panel to be visible")
 	}
 
-	// Focus-next should wrap to split 0 (pods) and refresh panel
-	model, _ = app.executeCommand("focus-next")
+	// focus-down (vertical = FocusNext) should wrap to split 0 (pods) and refresh panel
+	model, _ = app.executeCommand("focus-down")
 	app = model.(App)
 
 	if app.layout.FocusIndex() != 0 {
@@ -614,7 +615,7 @@ func TestScopedKeyPodsExecBinding(t *testing.T) {
 	km := config.DefaultKeymap()
 	cfg := config.DefaultConfig()
 	plugin.Reset()
-	app := New(nil, nil, km, cfg, nil, nil, nil, nil)
+	app := New(nil, nil, km, cfg, nil, nil, nil, nil, layout.OrientationVertical)
 
 	podsPlugin := &mockPlugin{
 		name: "pods",
@@ -637,7 +638,7 @@ func TestScopedKeyDeploymentNoExec(t *testing.T) {
 	km := config.DefaultKeymap()
 	cfg := config.DefaultConfig()
 	plugin.Reset()
-	app := New(nil, nil, km, cfg, nil, nil, nil, nil)
+	app := New(nil, nil, km, cfg, nil, nil, nil, nil, layout.OrientationVertical)
 
 	deploymentsPlugin := &mockPlugin{
 		name: "deployments",
@@ -737,11 +738,11 @@ func TestHorizontalScrollInDetailMode(t *testing.T) {
 		t.Fatal("H/L scroll should not exit detail-scroll mode")
 	}
 
-	// Press lowercase h — SHOULD exit detail-scroll mode
+	// Press lowercase h — should scroll left, NOT exit detail-scroll mode
 	model, _ = app.handleKey(tea.KeyPressMsg{Code: rune('h'), Text: "h"})
 	app = model.(App)
-	if !app.layout.FocusedResources() {
-		t.Fatal("lowercase h should exit detail-scroll mode")
+	if !app.layout.FocusedDetails() {
+		t.Fatal("lowercase h should scroll left, not exit detail-scroll mode")
 	}
 }
 
@@ -813,13 +814,13 @@ func TestContextSwitchResetsMidSequence(t *testing.T) {
 		t.Fatal("trie should be mid-sequence after pressing 'g'")
 	}
 
-	// Execute focus-next — should reset the trie
-	model, _ = app.executeCommand("focus-next")
+	// Execute focus-down (vertical = FocusNext) — should reset the trie
+	model, _ = app.executeCommand("focus-down")
 	app = model.(App)
 
 	// Trie should be back at root
 	if !app.keyTrie.AtRoot() {
-		t.Fatal("trie should be at root after focus-next resets it")
+		t.Fatal("trie should be at root after focus-down resets it")
 	}
 }
 
@@ -1166,7 +1167,7 @@ func TestEnterDetailCommand(t *testing.T) {
 	}
 }
 
-func TestExitDetailCommand(t *testing.T) {
+func TestFocusLeftVerticalExitsDetail(t *testing.T) {
 	app := newTestApp()
 
 	podsPlugin := &mockPlugin{
@@ -1187,14 +1188,14 @@ func TestExitDetailCommand(t *testing.T) {
 		t.Fatal("expected details to be focused")
 	}
 
-	// exit-detail should return to normal
-	model, _ = app.executeCommand("exit-detail")
+	// focus-left (vertical = FocusResources) should return to normal
+	model, _ = app.executeCommand("focus-left")
 	app = model.(App)
 	if !app.layout.FocusedResources() {
-		t.Fatal("expected resources to be focused after exit-detail")
+		t.Fatal("expected resources to be focused after focus-left")
 	}
 	if !app.layout.RightPanelVisible() {
-		t.Fatal("panel should still be visible after exit-detail")
+		t.Fatal("panel should still be visible after focus-left")
 	}
 }
 
@@ -1794,7 +1795,7 @@ func TestHandleGotoSelfPopulating(t *testing.T) {
 
 	km := config.DefaultKeymap()
 	cfg := config.DefaultConfig()
-	a := New(nil, nil, km, cfg, nil, nil, nil, nil)
+	a := New(nil, nil, km, cfg, nil, nil, nil, nil, layout.OrientationVertical)
 
 	// Add initial split with pods so goto has a focused split
 	a.layout.AddSplit(podsPlugin, "default")
@@ -1835,7 +1836,7 @@ func TestEnterDetailApiResourcesGoto(t *testing.T) {
 
 	km := config.DefaultKeymap()
 	cfg := config.DefaultConfig()
-	a := New(nil, nil, km, cfg, nil, nil, nil, nil)
+	a := New(nil, nil, km, cfg, nil, nil, nil, nil, layout.OrientationVertical)
 
 	a.layout.AddSplit(gotoPlugin, "default")
 	a.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{
@@ -2387,7 +2388,7 @@ func TestHandleGoto_ResumesLogStreamOnLoggable(t *testing.T) {
 	}
 }
 
-func TestFocusNext_SyncsLogPanel(t *testing.T) {
+func TestFocusDown_SyncsLogPanel(t *testing.T) {
 	app := newTestApp()
 
 	podsPlugin := &mockPlugin{
@@ -2422,27 +2423,27 @@ func TestFocusNext_SyncsLogPanel(t *testing.T) {
 	app.layout.SplitAt(1).SetObjects([]*unstructured.Unstructured{depObj})
 
 	// After AddSplit, focus is on split 1 (deployments).
-	// Move focus to split 0 (pods) so we can test focus-next going to deployments.
+	// Move focus to split 0 (pods) so we can test focus-down going to deployments.
 	app.layout.FocusPrev()
 
 	// Focus is on split 0 (pods). Enable log mode.
 	app.layout.SetLogMode(true)
 	app.layout.ShowRightPanel()
 
-	// Focus-next moves to split 1 (deployments) — should become unavailable
-	model, _ := app.executeCommand("focus-next")
+	// focus-down (vertical = FocusNext) moves to split 1 (deployments) — should become unavailable
+	model, _ := app.executeCommand("focus-down")
 	app = model.(App)
 
 	if !app.layout.LogView().IsUnavailable() {
-		t.Fatal("expected LogView unavailable after focus-next to deployments")
+		t.Fatal("expected LogView unavailable after focus-down to deployments")
 	}
 
-	// Focus-next wraps to split 0 (pods) — should resume (clear unavailable)
-	model, _ = app.executeCommand("focus-next")
+	// focus-down wraps to split 0 (pods) — should resume (clear unavailable)
+	model, _ = app.executeCommand("focus-down")
 	app = model.(App)
 
 	if app.layout.LogView().IsUnavailable() {
-		t.Fatal("expected LogView available after focus-next back to pods")
+		t.Fatal("expected LogView available after focus-down back to pods")
 	}
 }
 
@@ -4129,5 +4130,360 @@ func TestSearchChangedEmptyPatternClearsImmediately(t *testing.T) {
 
 	if split.FilterActive() {
 		t.Fatal("expected filter to be cleared after empty pattern")
+	}
+}
+
+func TestToggleOrientationCommand(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Default orientation should be vertical
+	if app.layout.Orientation() != layout.OrientationVertical {
+		t.Fatal("expected initial orientation to be vertical")
+	}
+
+	// Toggle to horizontal
+	model, _ := app.executeCommand("toggle-orientation")
+	app = model.(App)
+	if app.layout.Orientation() != layout.OrientationHorizontal {
+		t.Fatal("expected orientation to be horizontal after toggle")
+	}
+
+	// Toggle back to vertical
+	model, _ = app.executeCommand("toggle-orientation")
+	app = model.(App)
+	if app.layout.Orientation() != layout.OrientationVertical {
+		t.Fatal("expected orientation to be vertical after second toggle")
+	}
+}
+
+func TestFocusRightVerticalFocusesDetails(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-pod")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{obj})
+
+	// Open the right panel
+	model, _ := app.executeCommand("view-yaml")
+	app = model.(App)
+
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("expected right panel to be visible")
+	}
+	if !app.layout.FocusedResources() {
+		t.Fatal("expected resources to be focused initially")
+	}
+
+	// focus-right in vertical mode should focus details
+	model, _ = app.executeCommand("focus-right")
+	app = model.(App)
+	if !app.layout.FocusedDetails() {
+		t.Fatal("expected details to be focused after focus-right in vertical mode")
+	}
+}
+
+func TestDirectionalFocusHorizontalMode(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	deploymentsPlugin := &mockPlugin{
+		name: "deployments",
+		gvr:  schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+	}
+
+	plugin.Register(podsPlugin)
+	plugin.Register(deploymentsPlugin)
+
+	// Add two splits
+	app.layout.AddSplit(podsPlugin, "default")
+	app.layout.AddSplit(deploymentsPlugin, "default")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-pod")
+	app.layout.SplitAt(0).SetObjects([]*unstructured.Unstructured{obj})
+
+	depObj := &unstructured.Unstructured{}
+	depObj.SetName("test-dep")
+	app.layout.SplitAt(1).SetObjects([]*unstructured.Unstructured{depObj})
+
+	// Switch to horizontal mode
+	model, _ := app.executeCommand("toggle-orientation")
+	app = model.(App)
+	if app.layout.Orientation() != layout.OrientationHorizontal {
+		t.Fatal("expected horizontal orientation")
+	}
+
+	// focus is on split 1 (deployments)
+	if app.layout.FocusIndex() != 1 {
+		t.Fatalf("expected focus at index 1, got %d", app.layout.FocusIndex())
+	}
+
+	// In horizontal mode: focus-left = FocusPrev (should go to split 0)
+	model, _ = app.executeCommand("focus-left")
+	app = model.(App)
+	if app.layout.FocusIndex() != 0 {
+		t.Fatalf("expected focus at index 0 after focus-left in horizontal, got %d", app.layout.FocusIndex())
+	}
+
+	// In horizontal mode: focus-right = FocusNext (should go to split 1)
+	model, _ = app.executeCommand("focus-right")
+	app = model.(App)
+	if app.layout.FocusIndex() != 1 {
+		t.Fatalf("expected focus at index 1 after focus-right in horizontal, got %d", app.layout.FocusIndex())
+	}
+}
+
+func TestDirectionalFocusHorizontalDownFocusesDetails(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-pod")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{obj})
+
+	// Open the right panel
+	model, _ := app.executeCommand("view-yaml")
+	app = model.(App)
+
+	// Switch to horizontal mode
+	model, _ = app.executeCommand("toggle-orientation")
+	app = model.(App)
+
+	if !app.layout.FocusedResources() {
+		t.Fatal("expected resources to be focused initially")
+	}
+
+	// In horizontal mode: focus-down = FocusDetails
+	model, _ = app.executeCommand("focus-down")
+	app = model.(App)
+	if !app.layout.FocusedDetails() {
+		t.Fatal("expected details to be focused after focus-down in horizontal mode")
+	}
+}
+
+func TestDirectionalFocusHorizontalUpExitsDetail(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-pod")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{obj})
+
+	// Enter detail-scroll mode
+	model, _ := app.executeCommand("view-yaml-focused")
+	app = model.(App)
+	if !app.layout.FocusedDetails() {
+		t.Fatal("expected details to be focused")
+	}
+
+	// Switch to horizontal mode
+	model, _ = app.executeCommand("toggle-orientation")
+	app = model.(App)
+
+	// In horizontal mode: focus-up = FocusResources (exit-detail behavior)
+	model, _ = app.executeCommand("focus-up")
+	app = model.(App)
+	if !app.layout.FocusedResources() {
+		t.Fatal("expected resources to be focused after focus-up in horizontal mode")
+	}
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("panel should still be visible after focus-up in horizontal mode")
+	}
+}
+
+func TestFocusDownVerticalNextSplit(t *testing.T) {
+	// Verify that focus-down in vertical mode cycles through splits (FocusNext behavior)
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	deploymentsPlugin := &mockPlugin{
+		name: "deployments",
+		gvr:  schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+	}
+
+	plugin.Register(podsPlugin)
+	plugin.Register(deploymentsPlugin)
+
+	app.layout.AddSplit(podsPlugin, "default")
+	app.layout.AddSplit(deploymentsPlugin, "default")
+
+	// Focus is on split 1. focus-down should wrap to 0.
+	model, _ := app.executeCommand("focus-down")
+	app = model.(App)
+	if app.layout.FocusIndex() != 0 {
+		t.Fatalf("expected focus at index 0, got %d", app.layout.FocusIndex())
+	}
+
+	// focus-up should go back to 1
+	model, _ = app.executeCommand("focus-up")
+	app = model.(App)
+	if app.layout.FocusIndex() != 1 {
+		t.Fatalf("expected focus at index 1, got %d", app.layout.FocusIndex())
+	}
+}
+
+func TestFocusRightHorizontalNextSplit(t *testing.T) {
+	// Verify that focus-right in horizontal mode cycles through splits (FocusNext behavior)
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	deploymentsPlugin := &mockPlugin{
+		name: "deployments",
+		gvr:  schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+	}
+
+	plugin.Register(podsPlugin)
+	plugin.Register(deploymentsPlugin)
+
+	app.layout.AddSplit(podsPlugin, "default")
+	app.layout.AddSplit(deploymentsPlugin, "default")
+
+	// Switch to horizontal
+	model, _ := app.executeCommand("toggle-orientation")
+	app = model.(App)
+
+	// Focus is on split 1. focus-right (horizontal = FocusNext) should wrap to 0.
+	model, _ = app.executeCommand("focus-right")
+	app = model.(App)
+	if app.layout.FocusIndex() != 0 {
+		t.Fatalf("expected focus at index 0, got %d", app.layout.FocusIndex())
+	}
+
+	// focus-left (horizontal = FocusPrev) should go back to 1
+	model, _ = app.executeCommand("focus-left")
+	app = model.(App)
+	if app.layout.FocusIndex() != 1 {
+		t.Fatalf("expected focus at index 1, got %d", app.layout.FocusIndex())
+	}
+}
+
+func TestTogglePanelFocusRoundTrip(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	obj := &unstructured.Unstructured{}
+	obj.SetName("test-pod")
+	app.layout.FocusedSplit().SetObjects([]*unstructured.Unstructured{obj})
+
+	// Open right panel so toggle has somewhere to go
+	model, _ := app.executeCommand("view-yaml-focused")
+	app = model.(App)
+	if !app.layout.FocusedDetails() {
+		t.Fatal("expected details focused after view-yaml-focused")
+	}
+
+	// Toggle back to resources
+	model, _ = app.executeCommand("toggle-panel-focus")
+	app = model.(App)
+	if !app.layout.FocusedResources() {
+		t.Fatal("expected resources focused after toggle")
+	}
+	if !app.layout.RightPanelVisible() {
+		t.Fatal("right panel should remain visible")
+	}
+
+	// Toggle back to details
+	model, _ = app.executeCommand("toggle-panel-focus")
+	app = model.(App)
+	if !app.layout.FocusedDetails() {
+		t.Fatal("expected details focused after second toggle")
+	}
+}
+
+func TestTogglePanelFocusNoopWithoutRightPanel(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	plugin.Register(podsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+
+	// Right panel is hidden, resources focused — toggle should be no-op
+	if !app.layout.FocusedResources() {
+		t.Fatal("expected resources focused initially")
+	}
+
+	model, _ := app.executeCommand("toggle-panel-focus")
+	app = model.(App)
+	if !app.layout.FocusedResources() {
+		t.Fatal("expected resources still focused when right panel hidden")
+	}
+}
+
+func TestFocusNextSplitCycles(t *testing.T) {
+	app := newTestApp()
+
+	podsPlugin := &mockPlugin{
+		name: "pods",
+		gvr:  schema.GroupVersionResource{Version: "v1", Resource: "pods"},
+	}
+	deploymentsPlugin := &mockPlugin{
+		name: "deployments",
+		gvr:  schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
+	}
+	plugin.Register(podsPlugin)
+	plugin.Register(deploymentsPlugin)
+	app.layout.AddSplit(podsPlugin, "default")
+	app.layout.AddSplit(deploymentsPlugin, "default")
+
+	if app.layout.FocusIndex() != 1 {
+		t.Fatalf("expected focus at index 1, got %d", app.layout.FocusIndex())
+	}
+
+	// Next split wraps to 0
+	model, _ := app.executeCommand("focus-next-split")
+	app = model.(App)
+	if app.layout.FocusIndex() != 0 {
+		t.Fatalf("expected focus at index 0 after focus-next-split, got %d", app.layout.FocusIndex())
+	}
+
+	// Next split goes to 1
+	model, _ = app.executeCommand("focus-next-split")
+	app = model.(App)
+	if app.layout.FocusIndex() != 1 {
+		t.Fatalf("expected focus at index 1 after second focus-next-split, got %d", app.layout.FocusIndex())
 	}
 }

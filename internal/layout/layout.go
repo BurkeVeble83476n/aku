@@ -22,6 +22,14 @@ const (
 	ZoomDetail                 // detail panel fills entire screen
 )
 
+// Orientation describes the layout direction.
+type Orientation int
+
+const (
+	OrientationVertical   Orientation = iota // resources left, details right
+	OrientationHorizontal                    // resources top, details bottom
+)
+
 // FocusTarget describes which component has input focus.
 type FocusTarget int
 
@@ -39,6 +47,7 @@ type Layout struct {
 	focusTarget  FocusTarget
 	splitZoomed  bool
 	detailZoomed bool
+	orientation  Orientation
 	width        int
 	height       int
 	logView      *ui.LogView
@@ -284,6 +293,19 @@ func (l *Layout) DetailZoomed() bool { return l.detailZoomed }
 // AnyZoomed returns whether any zoom flag is set.
 func (l *Layout) AnyZoomed() bool { return l.splitZoomed || l.detailZoomed }
 
+// Orientation returns the current layout orientation.
+func (l *Layout) Orientation() Orientation { return l.orientation }
+
+// ToggleOrientation flips between vertical and horizontal layout.
+func (l *Layout) ToggleOrientation() {
+	if l.orientation == OrientationVertical {
+		l.orientation = OrientationHorizontal
+	} else {
+		l.orientation = OrientationVertical
+	}
+	l.recalcSizes()
+}
+
 // UnzoomAll clears both zoom flags.
 func (l *Layout) UnzoomAll() {
 	if l.detailZoomed {
@@ -361,12 +383,23 @@ func (l Layout) View() string {
 			return left
 		}
 		right := l.rightPanelView()
+		if l.orientation == OrientationHorizontal {
+			return lipgloss.JoinVertical(lipgloss.Left, left, right)
+		}
 		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 	default: // ZoomNone
 		var splitViews []string
 		for _, s := range l.splits {
 			splitViews = append(splitViews, s.View())
+		}
+		if l.orientation == OrientationHorizontal {
+			top := lipgloss.JoinHorizontal(lipgloss.Top, splitViews...)
+			if !l.rightVisible {
+				return top
+			}
+			right := l.rightPanelView()
+			return lipgloss.JoinVertical(lipgloss.Left, top, right)
 		}
 		left := lipgloss.JoinVertical(lipgloss.Left, splitViews...)
 		if !l.rightVisible {
@@ -396,30 +429,59 @@ func (l *Layout) recalcSizes() {
 		}
 
 	case ZoomSplit:
-		leftWidth, rightWidth := l.panelWidths()
-		for i := range l.splits {
-			if i == l.focusIdx {
-				l.splits[i].SetSize(leftWidth, l.height)
-			} else {
-				l.splits[i].SetSize(0, 0)
+		if l.orientation == OrientationHorizontal {
+			topHeight, bottomHeight := l.panelSizes()
+			for i := range l.splits {
+				if i == l.focusIdx {
+					l.splits[i].SetSize(l.width, topHeight)
+				} else {
+					l.splits[i].SetSize(0, 0)
+				}
 			}
-		}
-		if l.rightVisible {
-			dp.SetSize(rightWidth, l.height)
+			if l.rightVisible {
+				dp.SetSize(l.width, bottomHeight)
+			}
+		} else {
+			leftWidth, rightWidth := l.panelSizes()
+			for i := range l.splits {
+				if i == l.focusIdx {
+					l.splits[i].SetSize(leftWidth, l.height)
+				} else {
+					l.splits[i].SetSize(0, 0)
+				}
+			}
+			if l.rightVisible {
+				dp.SetSize(rightWidth, l.height)
+			}
 		}
 
 	default: // ZoomNone
-		leftWidth, rightWidth := l.panelWidths()
-		splitHeight := l.height / n
-		for i := range l.splits {
-			h := splitHeight
-			if i == n-1 {
-				h = l.height - splitHeight*(n-1)
+		if l.orientation == OrientationHorizontal {
+			topHeight, bottomHeight := l.panelSizes()
+			splitWidth := l.width / n
+			for i := range l.splits {
+				w := splitWidth
+				if i == n-1 {
+					w = l.width - splitWidth*(n-1)
+				}
+				l.splits[i].SetSize(w, topHeight)
 			}
-			l.splits[i].SetSize(leftWidth, h)
-		}
-		if l.rightVisible {
-			dp.SetSize(rightWidth, l.height)
+			if l.rightVisible {
+				dp.SetSize(l.width, bottomHeight)
+			}
+		} else {
+			leftWidth, rightWidth := l.panelSizes()
+			splitHeight := l.height / n
+			for i := range l.splits {
+				h := splitHeight
+				if i == n-1 {
+					h = l.height - splitHeight*(n-1)
+				}
+				l.splits[i].SetSize(leftWidth, h)
+			}
+			if l.rightVisible {
+				dp.SetSize(rightWidth, l.height)
+			}
 		}
 		if f := l.FocusedSplit(); f != nil {
 			f.EnsureCursorVisible()
@@ -427,8 +489,18 @@ func (l *Layout) recalcSizes() {
 	}
 }
 
-// panelWidths computes left and right panel widths.
-func (l *Layout) panelWidths() (int, int) {
+// panelSizes computes the primary and secondary panel dimensions.
+// In vertical orientation: returns (leftWidth, rightWidth).
+// In horizontal orientation: returns (topHeight, bottomHeight).
+func (l *Layout) panelSizes() (int, int) {
+	if l.orientation == OrientationHorizontal {
+		if !l.rightVisible {
+			return l.height, 0
+		}
+		topHeight := int(float64(l.height) * leftPanelRatio)
+		bottomHeight := l.height - topHeight
+		return topHeight, bottomHeight
+	}
 	if !l.rightVisible {
 		return l.width, 0
 	}
@@ -439,9 +511,13 @@ func (l *Layout) panelWidths() (int, int) {
 
 // splitDimensions returns the width and height for a new split given the count.
 func (l *Layout) splitDimensions(totalSplits int) (int, int) {
-	leftWidth, _ := l.panelWidths()
 	if totalSplits == 0 {
 		totalSplits = 1
 	}
+	if l.orientation == OrientationHorizontal {
+		topHeight, _ := l.panelSizes()
+		return l.width / totalSplits, topHeight
+	}
+	leftWidth, _ := l.panelSizes()
 	return leftWidth, l.height / totalSplits
 }

@@ -529,3 +529,178 @@ func TestLayoutHideRightPanelClearsDetailZoom(t *testing.T) {
 		t.Fatal("HideRightPanel should clear detail zoom")
 	}
 }
+
+func TestLayoutHorizontalZoomNoneSizing(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900) // height = 25
+	l.AddSplit(podsPlugin(), "default")
+	l.AddSplit(svcsPlugin(), "default")
+	l.ShowRightPanel()
+	l.ToggleOrientation() // switch to horizontal
+
+	// Top section: height * 0.5 = 12
+	// Bottom section: 25 - 12 = 13
+	// Each split width: 80 / 2 = 40
+
+	s0 := l.SplitAt(0)
+	if s0.Width() != 40 || s0.Height() != 12 {
+		t.Fatalf("split 0: expected 40x12, got %dx%d", s0.Width(), s0.Height())
+	}
+
+	s1 := l.SplitAt(1)
+	if s1.Width() != 40 || s1.Height() != 12 {
+		t.Fatalf("split 1: expected 40x12, got %dx%d", s1.Width(), s1.Height())
+	}
+
+	rp := l.RightPanel()
+	if rp.Width() != 80 || rp.Height() != 13 {
+		t.Fatalf("right panel: expected 80x13, got %dx%d", rp.Width(), rp.Height())
+	}
+}
+
+func TestLayoutHorizontalZoomNoneNoRightPanel(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900) // height = 25
+	l.AddSplit(podsPlugin(), "default")
+	l.AddSplit(svcsPlugin(), "default")
+	l.ToggleOrientation()
+
+	// Without right panel, each split gets full height
+	s0 := l.SplitAt(0)
+	if s0.Width() != 40 || s0.Height() != 25 {
+		t.Fatalf("split 0: expected 40x25, got %dx%d", s0.Width(), s0.Height())
+	}
+
+	s1 := l.SplitAt(1)
+	if s1.Width() != 40 || s1.Height() != 25 {
+		t.Fatalf("split 1: expected 40x25, got %dx%d", s1.Width(), s1.Height())
+	}
+}
+
+func TestLayoutHorizontalZoomSplitSizing(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900) // height = 25
+	l.AddSplit(podsPlugin(), "default")
+	l.AddSplit(svcsPlugin(), "default")
+	l.ShowRightPanel()
+	l.ToggleOrientation()
+
+	l.ToggleZoomSplit() // focus is on split 1
+
+	// Focused split gets full width, topHeight
+	focused := l.FocusedSplit()
+	if focused.Width() != 80 || focused.Height() != 12 {
+		t.Fatalf("focused split: expected 80x12, got %dx%d", focused.Width(), focused.Height())
+	}
+
+	// Non-focused split should be zero-sized
+	other := l.SplitAt(0)
+	if other.Width() != 0 || other.Height() != 0 {
+		t.Fatalf("non-focused split: expected 0x0, got %dx%d", other.Width(), other.Height())
+	}
+
+	// Right panel gets full width, bottomHeight
+	rp := l.RightPanel()
+	if rp.Width() != 80 || rp.Height() != 13 {
+		t.Fatalf("right panel: expected 80x13, got %dx%d", rp.Width(), rp.Height())
+	}
+}
+
+func TestLayoutHorizontalZoomDetailSizing(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900) // height = 25
+	l.AddSplit(podsPlugin(), "default")
+	l.ShowRightPanel()
+	l.ToggleOrientation()
+
+	l.ToggleZoomDetail()
+
+	// Detail fills entire screen regardless of orientation
+	rp := l.RightPanel()
+	if rp.Width() != 80 || rp.Height() != 26 {
+		t.Fatalf("right panel: expected 80x26, got %dx%d", rp.Width(), rp.Height())
+	}
+
+	// Splits should be zero-sized
+	s := l.SplitAt(0)
+	if s.Width() != 0 || s.Height() != 0 {
+		t.Fatalf("split should be 0x0 in detail zoom, got %dx%d", s.Width(), s.Height())
+	}
+}
+
+func TestLayoutHorizontalOneSplitRemainder(t *testing.T) {
+	// With 3 splits and width 80: 80/3=26, last split gets 80-26*2=28
+	l := New(80, 26, 1000, "15m", 900) // height = 25
+	l.AddSplit(podsPlugin(), "default")
+	l.AddSplit(svcsPlugin(), "default")
+	l.AddSplit(podsPlugin(), "default")
+	l.ToggleOrientation()
+
+	s0 := l.SplitAt(0)
+	if s0.Width() != 26 {
+		t.Fatalf("split 0 width: expected 26, got %d", s0.Width())
+	}
+	s2 := l.SplitAt(2)
+	if s2.Width() != 28 {
+		t.Fatalf("split 2 (last) width: expected 28, got %d", s2.Width())
+	}
+}
+
+func TestLayoutHorizontalViewNotEmpty(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900)
+	l.AddSplit(podsPlugin(), "default")
+	l.ToggleOrientation()
+
+	view := l.View()
+	if view == "" {
+		t.Fatal("horizontal view should not be empty")
+	}
+}
+
+func TestLayoutHorizontalViewWithRightPanel(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900)
+	l.AddSplit(podsPlugin(), "default")
+	l.ShowRightPanel()
+	l.ToggleOrientation()
+
+	view := l.View()
+	if view == "" {
+		t.Fatal("horizontal view with right panel should not be empty")
+	}
+}
+
+func TestLayoutHorizontalZoomSplitView(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900)
+	l.AddSplit(podsPlugin(), "default")
+	l.AddSplit(svcsPlugin(), "default")
+	l.ShowRightPanel()
+	l.ToggleOrientation()
+	l.ToggleZoomSplit()
+
+	view := l.View()
+	if view == "" {
+		t.Fatal("horizontal zoom split view should not be empty")
+	}
+}
+
+func TestLayoutToggleOrientationRecalcsSizes(t *testing.T) {
+	l := New(80, 26, 1000, "15m", 900) // height = 25
+	l.AddSplit(podsPlugin(), "default")
+	l.ShowRightPanel()
+
+	// Vertical: split gets leftWidth=40, height=25
+	s := l.FocusedSplit()
+	if s.Width() != 40 || s.Height() != 25 {
+		t.Fatalf("vertical: expected 40x25, got %dx%d", s.Width(), s.Height())
+	}
+
+	l.ToggleOrientation()
+
+	// Horizontal: split gets full width=80, topHeight=12
+	if s.Width() != 80 || s.Height() != 12 {
+		t.Fatalf("horizontal: expected 80x12, got %dx%d", s.Width(), s.Height())
+	}
+
+	l.ToggleOrientation()
+
+	// Back to vertical
+	if s.Width() != 40 || s.Height() != 25 {
+		t.Fatalf("back to vertical: expected 40x25, got %dx%d", s.Width(), s.Height())
+	}
+}

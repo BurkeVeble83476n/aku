@@ -125,7 +125,7 @@ type ResourceSpec struct {
 }
 
 // New creates a new App with all dependencies.
-func New(client *k8s.Client, store *k8s.Store, keymap *config.Keymap, cfg *config.Config, pfRegistry *portforward.Registry, helmClient helm.Client, specs []ResourceSpec, initialDetail *msgs.DetailMode) App {
+func New(client *k8s.Client, store *k8s.Store, keymap *config.Keymap, cfg *config.Config, pfRegistry *portforward.Registry, helmClient helm.Client, specs []ResourceSpec, initialDetail *msgs.DetailMode, initialOrientation layout.Orientation) App {
 	bs := keymap.BindingSet()
 	defaultTimeRange := cfg.LogDefaultTimeRange()
 	defaultSinceSeconds, ok := ui.LookupTimePreset(defaultTimeRange)
@@ -155,6 +155,10 @@ func New(client *k8s.Client, store *k8s.Store, keymap *config.Keymap, cfg *confi
 		containerPicker:     ui.NewContainerPicker(40, 20),
 		timeRangePicker:     ui.NewTimeRangePicker(40, 20),
 		scaleOverlay:        ui.NewScaleOverlay(40, 20),
+	}
+
+	if initialOrientation == layout.OrientationHorizontal {
+		a.layout.ToggleOrientation()
 	}
 
 	if client != nil {

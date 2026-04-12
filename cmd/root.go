@@ -11,6 +11,7 @@ import (
 	"github.com/aohoyd/aku/internal/app"
 	"github.com/aohoyd/aku/internal/config"
 	"github.com/aohoyd/aku/internal/helm"
+	"github.com/aohoyd/aku/internal/layout"
 	"github.com/aohoyd/aku/internal/k8s"
 	"github.com/aohoyd/aku/internal/msgs"
 	"github.com/aohoyd/aku/internal/plugin"
@@ -63,6 +64,7 @@ import (
 	"github.com/aohoyd/aku/internal/plugins/validatingadmissionpolicybindings"
 	"github.com/aohoyd/aku/internal/plugins/validatingwebhookconfigurations"
 	"github.com/aohoyd/aku/internal/portforward"
+	"github.com/aohoyd/aku/pkg/build"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/go-logr/logr"
@@ -77,6 +79,7 @@ var (
 	namespace  string
 	resources  []string
 	details    string
+	layoutFlag string
 )
 
 var rootCmd = &cobra.Command{
@@ -86,11 +89,18 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	v := build.Version
+	if build.Commit != "" {
+		v += " (" + build.Commit + ")"
+	}
+	rootCmd.Version = v
+
 	rootCmd.PersistentFlags().StringVar(&kubeconfig, "kubeconfig", "", "path to the kubeconfig file")
 	rootCmd.PersistentFlags().StringVar(&context_, "context", "", "the kubeconfig context to use")
 	rootCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "kubernetes namespace")
 	rootCmd.PersistentFlags().StringSliceVarP(&resources, "resource", "r", nil, "resources to display (e.g. pods,deploy or -r svc -r deploy)")
 	rootCmd.PersistentFlags().StringVarP(&details, "details", "d", "", "open detail panel on startup (y/yaml, d/describe, l/logs)")
+	rootCmd.PersistentFlags().StringVarP(&layoutFlag, "layout", "l", "", "layout orientation (v/vertical, h/horizontal)")
 
 	// Register flag completion functions
 	rootCmd.RegisterFlagCompletionFunc("context", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -111,6 +121,14 @@ func init() {
 			"describe\tShow resource description",
 			"l\tShow resource logs",
 			"logs\tShow resource logs",
+		}, cobra.ShellCompDirectiveNoFileComp
+	})
+	rootCmd.RegisterFlagCompletionFunc("layout", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{
+			"v\tVertical (resources left, details right)",
+			"vertical\tVertical (resources left, details right)",
+			"h\tHorizontal (resources top, details bottom)",
+			"horizontal\tHorizontal (resources top, details bottom)",
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
 
@@ -288,6 +306,18 @@ func parseDetailMode(s string) (*msgs.DetailMode, error) {
 	return &mode, nil
 }
 
+// parseLayoutOrientation converts the --layout flag value into a layout.Orientation.
+func parseLayoutOrientation(s string) (layout.Orientation, error) {
+	switch s {
+	case "", "v", "vertical":
+		return layout.OrientationVertical, nil
+	case "h", "horizontal":
+		return layout.OrientationHorizontal, nil
+	default:
+		return 0, fmt.Errorf("unknown layout %q, valid: v/vertical, h/horizontal", s)
+	}
+}
+
 func run(cmd *cobra.Command, args []string) error {
 	// Suppress klog stderr output that breaks TUI display
 	klog.SetOutput(io.Discard)
@@ -414,8 +444,14 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Parse layout orientation from -l flag
+	orientation, err := parseLayoutOrientation(layoutFlag)
+	if err != nil {
+		return err
+	}
+
 	// Create app
-	application := app.New(k8sClient, store, km, cfg, pfRegistry, hrPlugin.HelmClient(), specs, detailMode)
+	application := app.New(k8sClient, store, km, cfg, pfRegistry, hrPlugin.HelmClient(), specs, detailMode, orientation)
 
 	// Create program
 	p := tea.NewProgram(application)
