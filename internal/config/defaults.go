@@ -47,7 +47,7 @@ func DefaultBindings() []Binding {
 		{Key: "shift+down", Help: "focus down", Command: "focus-down"},
 		{Key: "tab", Help: "switch panel", Command: "toggle-panel-focus", Visible: true},
 		{Key: "shift+tab", Help: "next split", Command: "focus-next-split"},
-		{Key: "%", Help: "toggle layout", Command: "toggle-orientation", Visible: true},
+		{Key: "%", Help: "layout", Command: "toggle-orientation", Visible: true},
 		{Key: "0", Help: "line start", Command: "scroll-home"},
 		{Key: "$", Help: "line end", Command: "scroll-end"},
 
