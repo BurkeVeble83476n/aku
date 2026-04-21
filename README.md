@@ -81,7 +81,6 @@ aku --kubeconfig /path/to/kubeconfig   # custom kubeconfig path
 aku --version                          # show version
 ```
 
-> **Personal note:** I usually alias this as `k8ui` in my shell and always start with `-l horizontal` since I find the horizontal layout easier to read on wide monitors.
-
-| Flag | Short | Description |
-|------|--
+> **Personal note:** I usually alias this to `k8ui` in my shell and pair it with
+> `aku -n default -r pods,deploy -l horizontal` as my default startup command for
+> day-to-day cluster debugging.
